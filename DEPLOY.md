@@ -56,18 +56,91 @@ npm start
 scripts\keep-alive.bat
 ```
 
-## Docker 部署方向
+## Docker Compose 部署（推荐用于当前服务器）
 
-本仓库当前未内置 Dockerfile。后续如需 Docker，建议：
+你的服务器已有 `/opt + Docker Compose + Nginx + Let's Encrypt` 架构，建议使用独立目录和独立子域名：
 
-- 将 SQLite 文件挂载为 volume，避免容器重建丢数据。
-- 将 `.env` 作为运行时环境变量或挂载文件提供。
-- 在镜像构建阶段执行 `npm ci`、`npx prisma generate`、`npm run build`。
-- 在容器启动阶段运行 `npm start`。
+- 项目目录：`/opt/outlook-mail-manager`
+- 访问域名：`https://outlook.2963wang.shop`
+- 本机端口：`127.0.0.1:3005`
+- SQLite 数据目录：`/opt/outlook-mail-manager/data`
+
+部署命令：
+
+```bash
+cd /opt
+git clone https://github.com/k-kedrick/outlook-mail-manager.git
+cd outlook-mail-manager
+cp .env.example .env
+cp docker-compose.example.yml docker-compose.yml
+mkdir -p data
+```
+
+编辑 `.env`，生产环境建议：
+
+```env
+DATABASE_URL="file:/app/data/dev.db"
+APP_SECRET="replace-with-a-long-random-secret"
+ADMIN_PASSWORD="change-me"
+NEXT_PUBLIC_APP_URL="https://outlook.2963wang.shop"
+KEEP_ALIVE_ENABLED="1"
+KEEP_ALIVE_INTERVAL_HOURS="168"
+NEXT_PUBLIC_KEEP_ALIVE_INTERVAL_HOURS="168"
+```
+
+启动：
+
+```bash
+docker compose up -d --build
+docker compose ps
+docker logs outlook-mail-manager --tail=100
+```
+
+本机测试：
+
+```bash
+curl -I http://127.0.0.1:3005/login
+curl -I http://127.0.0.1:3005/redeem
+```
+
+Nginx 反代示例：
+
+```nginx
+server {
+    server_name outlook.2963wang.shop;
+
+    location / {
+        proxy_pass http://127.0.0.1:3005;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+首次部署后再用 Certbot 或面板为 `outlook.2963wang.shop` 申请 Let's Encrypt 证书。
+
+更新：
+
+```bash
+cd /opt/outlook-mail-manager
+git pull
+docker compose up -d --build
+```
+
+数据备份：
+
+```bash
+cd /opt/outlook-mail-manager
+cp data/dev.db data/dev.db.bak.$(date +%F-%H%M%S)
+```
 
 ## 迁移和数据
 
 - 公开仓库不包含真实 `prisma/dev.db`。
 - 生产服务器第一次部署用 `npx prisma migrate deploy` 创建结构。
 - 已有真实数据库迁移到服务器时，手动安全传输 `prisma/dev.db`，不要通过 GitHub 上传。
-

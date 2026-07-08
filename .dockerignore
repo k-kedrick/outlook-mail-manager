@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.env
+.env.local
+*.db
+*.db-journal
+*.bak
+dev.log
+output
+data
+test-results
+tsconfig.tsbuildinfo
+.agents
+.claude
+.codex

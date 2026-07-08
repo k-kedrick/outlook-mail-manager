@@ -1,0 +1,14 @@
+services:
+  outlook-mail-manager:
+    build: .
+    container_name: outlook-mail-manager
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "file:/app/data/dev.db"
+      NEXT_PUBLIC_APP_URL: "https://outlook.2963wang.shop"
+    ports:
+      - "127.0.0.1:3005:3005"
+    volumes:
+      - ./data:/app/data

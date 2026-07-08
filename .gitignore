@@ -2,6 +2,7 @@ node_modules
 .next
 out
 output
+data
 test-results
 .agents
 .claude
