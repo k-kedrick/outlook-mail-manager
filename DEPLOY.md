@@ -88,11 +88,19 @@ KEEP_ALIVE_INTERVAL_HOURS="168"
 NEXT_PUBLIC_KEEP_ALIVE_INTERVAL_HOURS="168"
 ```
 
-启动：
+启动。第一次构建会比较慢，`Building 13/19`、`exporting layers`、`docker:default` 都是正常进度，不是错误；看到 `Container outlook-mail-manager Started` 才算启动完成。
 
 ```bash
 docker compose up -d --build
 docker compose ps
+docker logs outlook-mail-manager --tail=100
+```
+
+如果误按 `Ctrl+C` 中断构建，后面可能没有容器，`docker compose ps` 会是空的；重新执行 `docker compose up -d --build` 并等待完成即可。
+
+需要排查的典型字样是：`ERROR`、`failed`、`CANCELED`、`Restarting`。其中 `Restarting` 通常需要看日志：
+
+```bash
 docker logs outlook-mail-manager --tail=100
 ```
 
@@ -103,7 +111,13 @@ curl -I http://127.0.0.1:3005/login
 curl -I http://127.0.0.1:3005/redeem
 ```
 
-Nginx 反代示例：
+也可以使用内置检查脚本。脚本不会打印 `.env` 中的密钥值，只检查是否仍是默认值：
+
+```bash
+bash deploy/scripts/check-deploy.sh
+```
+
+Nginx 反代示例已放在 `deploy/nginx/outlook.2963wang.shop.conf`，可复制到 `/etc/nginx/sites-available/outlook.2963wang.shop`：
 
 ```nginx
 server {
@@ -136,8 +150,15 @@ docker compose up -d --build
 
 ```bash
 cd /opt/outlook-mail-manager
-cp data/dev.db data/dev.db.bak.$(date +%F-%H%M%S)
+bash deploy/scripts/backup-sqlite.sh
 ```
+
+## `.env` 安全提醒
+
+- 不要把 `.env`、`APP_SECRET`、`ADMIN_PASSWORD`、RefreshToken、2FA 密钥、卡密或真实账号截图贴到公开聊天、GitHub issue 或 README。
+- 空库部署时，如果 `APP_SECRET` 或后台密码泄露，可以直接重新生成并修改 `.env`，然后 `docker compose restart`。
+- 已经导入真实账号后，不要随便改 `APP_SECRET`；它用于解密密码、RefreshToken 和 2FA 密钥，改掉会让已有密文不可读。
+- 如果只是后台密码泄露，可以只改 `ADMIN_PASSWORD`，或登录后台后在设置中修改管理员密码。
 
 ## 迁移和数据
 

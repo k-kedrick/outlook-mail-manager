@@ -124,11 +124,13 @@ MSA 刷新令牌**单次使用、每次刷新即轮换**；短时间内过多轮
 完整功能需要 Node.js 服务端环境。推荐把 GitHub 作为源码仓库，将项目部署到 VPS、Windows/Linux 服务器或后续 Docker 容器中运行。
 
 - 推荐：VPS / Windows / Linux Node 服务，SQLite 数据库保存在服务器本地持久目录。
-- 可选：Docker 部署，需把 SQLite 文件挂载为 volume。
+- 推荐 Docker Compose：适合 `/opt + Nginx + Let's Encrypt` 服务器，SQLite 挂载到 `data/` 持久目录。
 - 不推荐：GitHub Pages。它只能托管静态文件，不能运行 API、Prisma、SQLite 或后台定时器。
 - 不推荐：当前架构直接上 Vercel。SQLite 不适合 serverless 文件系统持久写入。
 
 详细步骤见 [DEPLOY.md](DEPLOY.md)。
+
+Docker 首次构建时 `Building xx/xx` 和 `exporting layers` 是正常进度；只有 `ERROR`、`failed`、`CANCELED`、`Restarting` 才需要按部署文档排查。
 
 ## 公开发布注意事项
 
