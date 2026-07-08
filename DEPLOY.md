@@ -61,7 +61,7 @@ scripts\keep-alive.bat
 你的服务器已有 `/opt + Docker Compose + Nginx + Let's Encrypt` 架构，建议使用独立目录和独立子域名：
 
 - 项目目录：`/opt/outlook-mail-manager`
-- 访问域名：`https://outlook.2963wang.shop`
+- 访问域名：你的域名，例如 `https://mail.example.com`
 - 本机端口：`127.0.0.1:3005`
 - SQLite 数据目录：`/opt/outlook-mail-manager/data`
 
@@ -74,7 +74,7 @@ cd outlook-mail-manager
 cp docker-compose.example.yml docker-compose.yml
 ```
 
-生成 `.env`。脚本会自动写好 Docker 所需的固定配置，只需要输入 `APP_SECRET` 和后台密码；`APP_SECRET` 留空时会自动生成：
+生成 `.env`。脚本会自动写好 Docker 所需的固定配置，只需要输入公网地址、`APP_SECRET` 和后台密码；`APP_SECRET` 留空时会自动生成：
 
 ```bash
 sh deploy/scripts/setup-env.sh
@@ -86,7 +86,7 @@ sh deploy/scripts/setup-env.sh
 DATABASE_URL="file:/app/data/dev.db"
 APP_SECRET="replace-with-a-long-random-secret"
 ADMIN_PASSWORD="change-me"
-NEXT_PUBLIC_APP_URL="https://outlook.2963wang.shop"
+NEXT_PUBLIC_APP_URL="https://mail.example.com"
 KEEP_ALIVE_ENABLED="1"
 KEEP_ALIVE_INTERVAL_HOURS="168"
 NEXT_PUBLIC_KEEP_ALIVE_INTERVAL_HOURS="168"
@@ -121,11 +121,11 @@ curl -I http://127.0.0.1:3005/redeem
 bash deploy/scripts/check-deploy.sh
 ```
 
-Nginx 反代示例已放在 `deploy/nginx/outlook.2963wang.shop.conf`，可复制到 `/etc/nginx/sites-available/outlook.2963wang.shop`：
+Nginx 反代示例已放在 `deploy/nginx/app.example.conf`，可复制到 `/etc/nginx/sites-available/<your-domain>`，并把 `server_name` 改成你的域名：
 
 ```nginx
 server {
-    server_name outlook.2963wang.shop;
+    server_name mail.example.com;
 
     location / {
         proxy_pass http://127.0.0.1:3005;
@@ -140,7 +140,7 @@ server {
 }
 ```
 
-首次部署后再用 Certbot 或面板为 `outlook.2963wang.shop` 申请 Let's Encrypt 证书。
+首次部署后再用 Certbot 或面板为你的域名申请 Let's Encrypt 证书。
 
 更新：
 

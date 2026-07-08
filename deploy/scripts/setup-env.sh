@@ -3,7 +3,7 @@ set -eu
 
 cd "$(dirname "$0")/../.."
 
-APP_URL="${APP_URL:-https://outlook.2963wang.shop}"
+APP_URL="${APP_URL:-http://localhost:3005}"
 ENV_FILE="${ENV_FILE:-.env}"
 
 if [ -f "$ENV_FILE" ]; then
@@ -14,6 +14,12 @@ if [ -f "$ENV_FILE" ]; then
     echo "Canceled."
     exit 1
   fi
+fi
+
+printf "Public app URL [%s]: " "$APP_URL"
+read -r app_url_input
+if [ -n "$app_url_input" ]; then
+  APP_URL="$app_url_input"
 fi
 
 printf "APP_SECRET (leave empty to generate one): "
