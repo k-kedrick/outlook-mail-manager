@@ -71,12 +71,16 @@ scripts\keep-alive.bat
 cd /opt
 git clone https://github.com/k-kedrick/outlook-mail-manager.git
 cd outlook-mail-manager
-cp .env.example .env
 cp docker-compose.example.yml docker-compose.yml
-mkdir -p data
 ```
 
-编辑 `.env`，生产环境建议：
+生成 `.env`。脚本会自动写好 Docker 所需的固定配置，只需要输入 `APP_SECRET` 和后台密码；`APP_SECRET` 留空时会自动生成：
+
+```bash
+sh deploy/scripts/setup-env.sh
+```
+
+生成后的 `.env` 结构如下：
 
 ```env
 DATABASE_URL="file:/app/data/dev.db"
