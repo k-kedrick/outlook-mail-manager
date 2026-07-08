@@ -25,11 +25,33 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-curl -fsSI http://127.0.0.1:3005/login >/dev/null
-echo "login: ok"
+wait_for_url() {
+  name="$1"
+  url="$2"
+  attempts="${3:-30}"
+  delay="${4:-2}"
 
-curl -fsSI http://127.0.0.1:3005/redeem >/dev/null
-echo "redeem: ok"
+  count=1
+  while [ "$count" -le "$attempts" ]; do
+    if curl -fsSI "$url" >/dev/null 2>&1; then
+      echo "$name: ok"
+      return 0
+    fi
+
+    if [ "$count" -eq 1 ]; then
+      echo "$name: waiting for app to become ready..."
+    fi
+
+    count=$((count + 1))
+    sleep "$delay"
+  done
+
+  echo "$name: failed after $attempts attempts"
+  return 1
+}
+
+wait_for_url "login" "http://127.0.0.1:3005/login"
+wait_for_url "redeem" "http://127.0.0.1:3005/redeem"
 
 echo
 echo "== .env safety checks =="
