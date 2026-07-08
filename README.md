@@ -13,7 +13,26 @@
 Next.js 15 (App Router) · Prisma + SQLite · Tailwind CSS。
 密码与令牌全部使用 AES-256-GCM 加密入库。读信优先走 Outlook REST API，Graph 仅作兜底；不再使用 IMAP。
 
-## 快速开始
+## 推荐部署：Docker 空库一键安装
+
+公开仓库默认按**空数据库**部署，不迁移任何本机账号数据。部署脚本会自动生成 `APP_SECRET`、创建 `.env` / `docker-compose.yml`、启动容器并检查 `/login` 和 `/redeem`。
+
+```bash
+cd /opt
+git clone https://github.com/k-kedrick/outlook-mail-manager.git
+cd outlook-mail-manager
+sh deploy/scripts/install.sh
+```
+
+脚本支持三种访问方式：
+
+- `reverse-proxy`：推荐，绑定 `127.0.0.1:3005`，配合 Nginx/Caddy/宝塔和 HTTPS。
+- `direct-ip`：绑定 `0.0.0.0:3005`，可用 `http://服务器IP:3005` 访问。
+- `local`：绑定 `127.0.0.1:3005`，只用于本机测试。
+
+详细部署、更新、备份和删除重装见 [DEPLOY.md](DEPLOY.md)。安全注意事项见 [SECURITY.md](SECURITY.md)。
+
+## 本地开发
 
 ```bash
 npm install
@@ -22,7 +41,7 @@ npx prisma migrate dev      # 初始化数据库（首次）
 npm run dev                 # 启动，访问 http://localhost:3005
 ```
 
-默认登录口令由 `.env` 的 `ADMIN_PASSWORD` 决定（示例值 `admin123`，请务必修改）。
+默认登录口令由 `.env` 的 `ADMIN_PASSWORD` 决定，请务必修改为自己的强密码。
 
 ## 环境变量
 
@@ -121,27 +140,16 @@ MSA 刷新令牌**单次使用、每次刷新即轮换**；短时间内过多轮
 
 ## 部署方式概览
 
-完整功能需要 Node.js 服务端环境。推荐把 GitHub 作为源码仓库，将项目部署到 VPS、Windows/Linux 服务器或后续 Docker 容器中运行。
+完整功能需要 Node.js 服务端环境。推荐把 GitHub 作为源码仓库，将项目部署到 VPS、Windows/Linux 服务器或 Docker 容器中运行。
 
-- 推荐：VPS / Windows / Linux Node 服务，SQLite 数据库保存在服务器本地持久目录。
-- 推荐 Docker Compose：适合 `/opt + Nginx + Let's Encrypt` 服务器，SQLite 挂载到 `data/` 持久目录。
+- 推荐：Docker Compose 空库一键部署，SQLite 挂载到 `data/` 持久目录。
+- 可选：VPS / Windows / Linux Node 服务，SQLite 数据库保存在服务器本地持久目录。
 - 不推荐：GitHub Pages。它只能托管静态文件，不能运行 API、Prisma、SQLite 或后台定时器。
 - 不推荐：当前架构直接上 Vercel。SQLite 不适合 serverless 文件系统持久写入。
 
 详细步骤见 [DEPLOY.md](DEPLOY.md)。
 
 Docker 首次构建时 `Building xx/xx` 和 `exporting layers` 是正常进度；只有 `ERROR`、`failed`、`CANCELED`、`Restarting` 才需要按部署文档排查。
-
-Docker 服务器部署优先使用空库一键安装：
-
-```bash
-cd /opt
-git clone https://github.com/k-kedrick/outlook-mail-manager.git
-cd outlook-mail-manager
-sh deploy/scripts/install.sh
-```
-
-脚本支持反代、服务器 IP:端口、本地运行三种方式，会自动生成 `APP_SECRET`；按提示选择访问方式并输入后台密码即可。
 
 ## 公开发布注意事项
 

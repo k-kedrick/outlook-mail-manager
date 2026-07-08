@@ -7,7 +7,63 @@
 - **GitHub Pages**：只能托管静态文件，不能运行 Next API、Prisma、SQLite 或后台定时任务。
 - **当前架构直接上 Vercel**：SQLite 不适合 serverless 文件系统持久写入；如需 Vercel，建议先迁移到 PostgreSQL/MySQL 等外部数据库。
 
-## Linux / VPS 推荐部署
+## Docker 一键部署（空库优先，推荐）
+
+默认按空数据库部署，不迁移任何旧账号数据。安装脚本会生成 `.env`、生成实际 `docker-compose.yml`、创建 `data/`、启动容器并等待健康检查。
+
+```bash
+cd /opt
+git clone https://github.com/k-kedrick/outlook-mail-manager.git
+cd outlook-mail-manager
+sh deploy/scripts/install.sh
+```
+
+脚本会让你选择访问方式：
+
+- `reverse-proxy`：推荐，绑定 `127.0.0.1:3005`，再用 Nginx/Caddy/面板反代并开启 HTTPS。
+- `direct-ip`：绑定 `0.0.0.0:3005`，可直接访问 `http://服务器IP:3005`。
+- `local`：绑定 `127.0.0.1:3005`，只适合本机测试。
+
+脚本会自动生成 `APP_SECRET`；你只需要按提示选择访问方式/公网地址，并输入后台密码。脚本不会把密钥或密码打印出来。
+
+### 反代 + HTTPS 示例
+
+你的服务器如果使用 `outlook.2963wang.shop`：
+
+```bash
+cd /opt
+git clone https://github.com/k-kedrick/outlook-mail-manager.git
+cd outlook-mail-manager
+APP_DOMAIN=outlook.2963wang.shop INSTALL_NGINX=1 sh deploy/scripts/install.sh
+```
+
+脚本会写 Nginx 配置、执行 `nginx -t` 并 reload。HTTPS 仍建议手动执行：
+
+```bash
+certbot --nginx -d outlook.2963wang.shop
+```
+
+### IP 直连示例
+
+不用反代时选择 `direct-ip`，或直接指定：
+
+```bash
+ACCESS_MODE=direct-ip sh deploy/scripts/install.sh
+```
+
+这种方式会开放 `0.0.0.0:3005`。正式环境建议只用于临时测试，长期使用优先 HTTPS 反代。
+
+### 本地测试示例
+
+```bash
+ACCESS_MODE=local sh deploy/scripts/install.sh
+```
+
+访问 `http://localhost:3005`。
+
+## 高级手动部署
+
+### Linux / VPS Node 部署
 
 ```bash
 git clone <your-repo-url> outlook
@@ -35,7 +91,7 @@ npm start
 
 默认监听 `http://localhost:3005`。生产环境建议使用 Nginx、Caddy 或面板反代到 `localhost:3005`，并开启 HTTPS。
 
-## Windows 服务器部署
+### Windows 服务器部署
 
 ```bat
 git clone <your-repo-url> outlook
@@ -56,45 +112,7 @@ npm start
 scripts\keep-alive.bat
 ```
 
-## Docker 一键部署（空库优先，推荐）
-
-默认按空数据库部署，不迁移任何旧账号数据。重新运行安装脚本并确认 `RESET` 会删除 `data/`，也就是删除服务器上的全部账号、卡密、验证码缓存和 2FA 数据。
-
-### 最简流程
-
-```bash
-cd /opt
-git clone https://github.com/k-kedrick/outlook-mail-manager.git
-cd outlook-mail-manager
-sh deploy/scripts/install.sh
-```
-
-脚本会让你选择访问方式：
-
-- `reverse-proxy`：推荐，绑定 `127.0.0.1:3005`，再用 Nginx/Caddy/面板反代。
-- `direct-ip`：绑定 `0.0.0.0:3005`，可直接访问 `http://服务器IP:3005`。
-- `local`：绑定 `127.0.0.1:3005`，只适合本机测试。
-
-脚本会自动生成 `APP_SECRET`；你只需要按提示选择访问方式/公网地址，并输入后台密码。脚本不会把密钥或密码打印出来。
-
-### 你的服务器示例
-
-反代部署到 `outlook.2963wang.shop`：
-
-```bash
-cd /opt
-git clone https://github.com/k-kedrick/outlook-mail-manager.git
-cd outlook-mail-manager
-APP_DOMAIN=outlook.2963wang.shop INSTALL_NGINX=1 sh deploy/scripts/install.sh
-```
-
-脚本会写 Nginx 配置、执行 `nginx -t` 并 reload。HTTPS 仍建议手动执行：
-
-```bash
-certbot --nginx -d outlook.2963wang.shop
-```
-
-### 高级手动流程
+### Docker 手动流程
 
 如果不想用一键脚本，可以手动生成配置：
 
@@ -155,7 +173,7 @@ server {
 
 首次部署后再用 Certbot 或面板为你的域名申请 Let's Encrypt 证书。
 
-### 删除并重新空库部署
+## 删除并重新空库部署
 
 以下命令会删除 Outlook 项目容器、镜像、项目目录和 `data/` 数据库：
 
@@ -166,7 +184,7 @@ docker rmi outlook-mail-manager-outlook-mail-manager 2>/dev/null || true
 rm -rf /opt/outlook-mail-manager
 ```
 
-更新：
+## 更新
 
 ```bash
 cd /opt/outlook-mail-manager
@@ -174,7 +192,7 @@ git pull
 docker compose up -d --build
 ```
 
-数据备份：
+## 数据备份
 
 ```bash
 cd /opt/outlook-mail-manager
@@ -191,5 +209,5 @@ bash deploy/scripts/backup-sqlite.sh
 ## 迁移和数据
 
 - 公开仓库不包含真实 `prisma/dev.db`。
-- 生产服务器第一次部署用 `npx prisma migrate deploy` 创建结构。
+- Docker 空库部署会在容器启动时自动执行 `npx prisma migrate deploy` 创建结构。
 - 已有真实数据库迁移到服务器时，手动安全传输 `prisma/dev.db`，不要通过 GitHub 上传。

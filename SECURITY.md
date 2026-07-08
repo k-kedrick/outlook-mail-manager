@@ -5,6 +5,7 @@
 ## 禁止提交到 GitHub 的内容
 
 - `.env`、`.env.local`
+- `data/dev.db`、`data/backups/*`
 - `prisma/dev.db`、`*.db`、`*.db-journal`
 - `prisma/dev.db.bak`、`*.bak`
 - 日志文件 `*.log`
@@ -14,7 +15,16 @@
 
 ## APP_SECRET
 
-`APP_SECRET` 用于解密已存储的密码、RefreshToken 和 2FA 密钥。修改它会导致旧密文无法解密。生产环境必须使用强随机值，但已有真实数据迁移时必须保持原值一致。
+`APP_SECRET` 用于解密已存储的密码、RefreshToken 和 2FA 密钥。修改它会导致旧密文无法解密。
+
+- 空库部署：可以让 `deploy/scripts/install.sh` 自动生成新 `APP_SECRET`。
+- 已有数据部署：不要随便更换 `APP_SECRET`；更换后旧密文会无法解密。
+- 已泄露但还没导入真实账号：可以删除空库重新部署，生成新的 `APP_SECRET`。
+- 已泄露且已有真实账号：先备份数据库，再评估重新导入账号或轮换全部敏感凭据。
+
+## 公网访问
+
+推荐正式环境使用 HTTPS 反代，只让容器绑定 `127.0.0.1:3005`。`direct-ip` 模式会绑定 `0.0.0.0:3005` 并把后台直接暴露到公网，只建议临时测试或在防火墙白名单下使用。
 
 ## 公开兑换页
 
@@ -32,4 +42,3 @@ git status --short
 ```
 
 并确认 staging 中没有数据库、环境变量、日志、真实截图和真实导出文件。
-

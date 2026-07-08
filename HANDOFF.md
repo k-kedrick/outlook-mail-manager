@@ -10,8 +10,9 @@
 
 - **数据库里已有 51 个真实账号**（`prisma/dev.db`），另有用户测试时建的少量真实卡密（`CardKey` 表）。任何"重置数据库 / 清库 / 删迁移重建"之类的操作，**动手前必须先跟用户确认**。改 schema 一律走**纯增量迁移**（可空列/新表），迁移前先 `cp prisma/dev.db prisma/dev.db.bak` 兜底。
 - `.env` 的 `APP_SECRET` 一旦更改，**已加密存储的密码/RefreshToken/2FA密钥 会全部报废、无法解密**，改之前要三思。
-- **管理员登录密码现在可在「设置」弹窗里修改**：改后以 scrypt 哈希存 `AppConfig.adminPasswordHash`，**优先于** `.env` 的 `ADMIN_PASSWORD`；该列为空时回退用 env 口令（当前就是空、即用 env 的 `admin123`）。想恢复 env 口令就把这列置 null。注意 session 是无状态 HMAC，改密不会踢掉已登录会话。
-- 本项目**不是 git 仓库**（未初始化），无提交历史可查——所有变更历史只存在于本文档和对话记录里。
+- **管理员登录密码现在可在「设置」弹窗里修改**：改后以 scrypt 哈希存 `AppConfig.adminPasswordHash`，**优先于** `.env` 的 `ADMIN_PASSWORD`；该列为空时回退用 env 口令。想恢复 env 口令就把这列置 null。注意 session 是无状态 HMAC，改密不会踢掉已登录会话。
+- 本项目现在已经是 git 仓库，并已公开推送到 `https://github.com/k-kedrick/outlook-mail-manager`。公开仓库不包含 `.env`、真实数据库、日志或真实导出文件。
+- 服务器部署现在默认走**空库 Docker 一键部署**，不迁移本机 51 个账号；服务器数据在 `/opt/outlook-mail-manager/data/dev.db`，删除 `data/` 就会删除服务器上的账号、卡密、验证码缓存和 2FA 数据。
 - **公开页 `/redeem` 只能走只读取码路径**（`fetchAndStoreCode`），**绝不能在里面调 `checkAccount`/keep-alive/`forceRefresh`**，否则破坏下面第四期的令牌轮换护栏。TOTP 是纯本地计算、不触网。
 
 ## 技术栈
@@ -61,6 +62,10 @@ src/
   middleware.ts        登录态门禁（白名单放行 /redeem 与 /api/redeem*）
 prisma/schema.prisma   MailAccount / MailGroup / AppConfig / CardKey
 scripts/keep-alive.ts + .bat   脱离网站独立跑保活刷新，供 Windows 计划任务用
+deploy/scripts/install.sh       空库优先 Docker 一键部署（反代 / IP直连 / 本地三种模式）
+deploy/scripts/check-deploy.sh  部署健康检查（不打印密钥明文）
+deploy/scripts/backup-sqlite.sh 服务器 SQLite 备份
+deploy/nginx/app.example.conf   Nginx 反代模板
 ```
 
 ## 迭代历史（做了什么 / 为什么）
@@ -127,6 +132,7 @@ scripts/keep-alive.ts + .bat   脱离网站独立跑保活刷新，供 Windows �
 3. 没有任何自动化测试（没有 `*.test.ts`），所有验证都是本轮对话里手写临时脚本跑出来的（验证完会删掉）。如果后续加测试，优先覆盖验证码提取、导入解析、导出字段、TOTP 生成。
 4. **`prisma/dev.db.bak` 备份文件**：第六/七期迁移前留的 SQLite 备份，占空间但无害；确认新功能都稳了可以删。
 5. **`totpSecretCipher` / 卡密码是敏感数据**：导出（`accounts/export`）会解密导出 2FA 密钥明文、卡密也是明文——这是刻意的（管理员导出用），但注意别把导出接口暴露到公网。公开的 `/api/redeem*` 已严格只回 email+验证码+TOTP，不回这些。
+6. **公开部署主线已改为空库 Docker 一键部署**：`sh deploy/scripts/install.sh` 会生成 `.env` 和实际 `docker-compose.yml`，自动创建空库并启动容器。不要再把服务器部署默认写成本机 51 个账号迁移流程；迁移旧数据库只属于高级场景。
 
 ## 如何启动 / 验证
 
@@ -136,6 +142,16 @@ npm run dev                 # http://localhost:3005；后台登录口令见 .env
                             # 公开兑换页：http://localhost:3005/redeem（无需登录，用卡密进入）
 npx tsc --noEmit             # 改完代码务必跑一次类型检查
 npx prisma studio             # 图形化查库（小心别误删数据）
+```
+
+服务器空库部署验证：
+
+```bash
+cd /opt
+git clone https://github.com/k-kedrick/outlook-mail-manager.git
+cd outlook-mail-manager
+sh deploy/scripts/install.sh
+bash deploy/scripts/check-deploy.sh
 ```
 
 之前会话验证接口/逻辑的习惯做法：在项目根目录写临时 `scratch_*.ts` 脚本（用 `npx tsx` 跑，`import "dotenv/config"` 后能直接 `import` 项目里的 `src/lib/*`、直连 prisma 与真实接口），验证完当场删除，不要污染项目。避免用系统 `/tmp` 路径（Windows 下 Node 对 `/tmp` 解析有坑）。验证公开接口可直接 `curl localhost:3005/api/redeem*`（无需 cookie）；验证需登录的接口可用 `curl -c/-b` cookie jar 先打 `/api/auth/login`。
