@@ -2,6 +2,32 @@
 
 > 供新对话接续本项目时快速上手。新会话应先完整读完本文件，再复述关键要点确认理解，然后再动手。
 
+## 新窗口必须先确认的当前状态
+
+- **本地项目目录**：`D:\project\outlook`。
+- **GitHub 公开仓库**：`https://github.com/k-kedrick/outlook-mail-manager`。
+- **服务器部署域名**：`https://outlook.2963wang.shop`，当前 `/login` 已公网验证 `HTTP/2 200`。
+- **服务器部署目录**：`/opt/outlook-mail-manager`。
+- **服务器容器名**：`outlook-mail-manager`。
+- **服务器运行方式**：Docker Compose + Nginx 反向代理 + Let's Encrypt HTTPS，容器绑定 `127.0.0.1:3005->3005`。
+- **服务器数据策略**：服务器是**空库部署**，不迁移本机 51 个真实账号。服务器数据只在 `/opt/outlook-mail-manager/data/dev.db`；删除 `data/` 就是删除服务器全部账号、卡密、验证码缓存和 2FA 数据。
+- **公开发布策略**：GitHub 只放源码、脱敏截图、部署脚本和文档；绝不提交 `.env`、`data/`、`prisma/dev.db`、`*.db`、`*.bak`、真实导出文件、真实截图、日志。
+- **当前推荐部署入口**：新用户直接执行 `sh deploy/scripts/install.sh`，脚本自动生成 `.env`、`APP_SECRET`、`docker-compose.yml`、`data/` 并启动容器。
+- **当前访问模式**：
+  - `reverse-proxy`：正式推荐，绑定 `127.0.0.1:3005`，用 Nginx/Caddy/宝塔/Cloudflare/HTTPS 访问。
+  - `direct-ip`：测试可用，绑定 `0.0.0.0:3005`，用 `http://服务器IP:3005` 访问，但长期公网使用不推荐。
+  - `local`：本地测试，绑定 `127.0.0.1:3005`。
+
+## 给新窗口的工作原则
+
+1. **先读完整个 `HANDOFF.md`，再复述关键护栏**。尤其要确认：本地真实数据库、`APP_SECRET` 风险、检测状态/刷新令牌分离、`/redeem` 只读取码、验证码正则误抓 `Enter` 已修复。
+2. **默认先规划，经用户确认后再动手**。除非用户明确说“开始执行”或给出 “PLEASE IMPLEMENT THIS PLAN”。
+3. **不要为了方便清库、改 `.env`、重置 Prisma、删除迁移或覆盖真实数据**。本地 `prisma/dev.db` 是真实账号库；服务器空库是另一回事，不要混淆。
+4. **改业务逻辑必须验证真实行为**。只跑 `tsc` 不够；涉及导入、导出、取码、2FA、卡密、部署时，应结合页面、接口或脚本验证。
+5. **涉及 RefreshToken 的改动要格外谨慎**。读信、取验证码、检测状态不应该被改成频繁 `forceRefresh`。
+6. **涉及公开 GitHub 的改动要做敏感信息检查**。不得把真实邮箱、卡密、验证码、RefreshToken、2FA 密钥、`.env`、数据库或日志推上去。
+7. **文档要跟代码同步**。如果改了部署方式、API 语义、安全边界、使用流程，要同步 `README.md` / `DEPLOY.md` / `SECURITY.md` / `HANDOFF.md`。
+
 ## 一句话简介
 
 一个独立的 Next.js 后台，用来批量管理 Outlook / MSA 账号（`邮箱----密码----ClientId----RefreshToken` 格式导入）：读收件箱（含垃圾邮件）、抓验证码、检测账号状态、自动/手动刷新令牌防失效。**另外还带一套"卡密兑换 + 身份验证器(TOTP)"系统**：后台给账号生成一对一卡密，买家在公开页 `/redeem` 用卡密换取该账号的邮箱验证码和 TOTP 动态码。目录：`D:\project\outlook`。
@@ -166,3 +192,37 @@ bash deploy/scripts/check-deploy.sh
 - UI 反馈会给**截图并圈出具体位置**，指出的问题要逐条对应回复、逐条修。
 - 偏好先规划、经确认后再动手（这也是为什么大部分改动都走了 plan mode）。
 - 每次改动后期望**用真实数据/真实请求验证**，而不是只看 `tsc` 通过就算完事。
+
+## 新窗口对接话语（直接复制）
+
+下面这段可以直接复制到新的 Codex 窗口作为开场：
+
+```text
+接手 D:\project\outlook 这个 Outlook 邮箱管理项目继续优化。
+
+请你先完整读取 D:\project\outlook\HANDOFF.md，然后用你自己的话复述关键要点，确认理解后先不要动代码，等我告诉你这次具体优化什么。
+
+当前项目状态：
+1. 本地项目目录是 D:\project\outlook。
+2. GitHub 公开仓库是 https://github.com/k-kedrick/outlook-mail-manager。
+3. 项目已经部署到服务器，域名是 https://outlook.2963wang.shop，服务器目录是 /opt/outlook-mail-manager，Docker 容器名是 outlook-mail-manager。
+4. 服务器部署走空库 Docker 一键部署，不迁移本机 51 个真实账号；部署脚本是 sh deploy/scripts/install.sh，检查脚本是 bash deploy/scripts/check-deploy.sh。
+5. 公开仓库只允许提交源码、文档、脱敏截图和部署脚本，不能提交 .env、data/、prisma/dev.db、*.db、*.bak、日志、真实导出文件或真实截图。
+
+必须严格遵守的安全护栏：
+1. 本地 prisma/dev.db 里有 51 个真实账号 + 真实卡密数据，不能随便清库、重置、删迁移或覆盖。改 schema 只能走纯增量迁移，迁移前先备份 dev.db。
+2. .env 的 APP_SECRET 不能随便改；一改会导致本地已加密的密码、RefreshToken、2FA 密钥全部无法解密。
+3. “检测状态”和“刷新令牌”是两个完全不同的操作。MSA RefreshToken 每次刷新都会轮换，频繁轮换会触发风控；不要破坏 oauth.ts 的 5 分钟轮换护栏。
+4. 公开兑换页 /redeem 只能读取邮箱验证码和本地计算 TOTP，绝不能在里面调用 checkAccount、keep-alive 或 forceRefresh。
+5. 列表里的“最新验证码 / 验证码时间”是邮箱验证码，不是 2FA 动态码。
+6. 验证码正则误抓 ChatGPT 邮件里的 Enter 这个 bug 已经修复，不要当成新发现；如果再改 codes.ts，必须保留 ChatGPT 样本 Enter this temporary verification code to continue: 736276 返回 736276。
+
+协作方式：
+1. 先规划，经我确认后再动手；如果我明确说“开始执行”或 “PLEASE IMPLEMENT THIS PLAN”，再直接实现。
+2. 改完不要只跑 tsc；涉及业务的改动要尽量用真实页面、真实接口或真实数据验证。
+3. 涉及 GitHub 发布、部署、截图、导出时，要主动检查敏感信息泄露风险。
+4. 如果发现文档和代码不一致，优先核对真实代码/运行状态，然后同步更新 README.md、DEPLOY.md、SECURITY.md、HANDOFF.md。
+5. 回答和说明用中文，尽量具体、直接，不要泛泛而谈。
+
+读完 HANDOFF.md 后，先复述你理解的关键点，尤其是 GitHub/服务器部署状态、本地真实数据库保护、RefreshToken 护栏、/redeem 边界、公开发布敏感信息规则。
+```
