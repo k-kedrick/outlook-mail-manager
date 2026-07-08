@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  /* Semantic dark tokens — indigo primary + teal accent. */
+  --bg: #080d18;
+  --surface: #101827;
+  --surface-2: #172134;
+  --line: #253044;
+  --line-2: #314057;
+  --text: #e5e9f0;
+  --muted: #94a3b8;
+  --dim: #6b7280;
+  --accent: #6366f1;
+  --accent-600: #4f46e5;
+  --teal: #14b8a6;
+  --accent-glow: rgba(99, 102, 241, 0.35);
+  --teal-glow: rgba(20, 184, 166, 0.3);
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  min-height: 100%;
+  color: var(--text);
+  background: var(--bg);
+  /* Subtle top + side glow so the dark surface doesn't feel flat. */
+  background-image: radial-gradient(1200px 500px at 50% -240px, rgba(99, 102, 241, 0.08), transparent 70%),
+    radial-gradient(800px 420px at 88% -40px, rgba(20, 184, 166, 0.045), transparent 72%);
+  background-attachment: fixed;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3f4d63;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Remove number-input spinners for the tidy page-size field. */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Glowing gradient text for the primary page title. */
+.text-glow-title {
+  background-image: linear-gradient(90deg, #c7d2fe, #93c5fd, #5eead4);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.24));
+}

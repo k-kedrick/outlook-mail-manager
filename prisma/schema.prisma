@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model MailAccount {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  passwordCipher     String
+  clientId           String
+  refreshTokenCipher String
+  status             String    @default("UNKNOWN") // UNKNOWN | OK | AUTH_FAILED | LOCKED | ERROR
+  lastCheckedAt      DateTime?
+  lastError          String?
+  note               String?
+  groupId            String?
+
+  // Which mail protocol actually works for this account, learned on first success.
+  // "graph" | "imap" | null (unknown → try graph then imap).
+  mailProtocol       String?
+
+  // Refresh-token keep-alive tracking. The MSA refresh token slides forward on
+  // every use but dies after an inactivity window (~90 days). We record the last
+  // successful rotation and model a 90-day validity that counts down.
+  refreshTokenUpdatedAt DateTime?
+  refreshTokenExpiresAt DateTime? // now + refresh_token_expires_in, else now + 90 days
+
+  // Cached latest verification code (populated on demand / by optional polling).
+  lastCode        String?
+  lastCodeAt      DateTime? // received time of the email the code came from
+  lastCodeSubject String?
+
+  // Authenticator (TOTP) secret — the base32 seed, AES-256-GCM encrypted like the
+  // other secrets. Null when the account has no 2FA configured.
+  totpSecretCipher String?
+
+  // Cached access tokens (Graph and IMAP have different audiences/scopes)
+  graphTokenCipher    String?
+  graphTokenExpiresAt DateTime?
+  imapTokenCipher     String?
+  imapTokenExpiresAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  group   MailGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  cardKey CardKey?
+
+  @@index([status])
+  @@index([groupId])
+}
+
+// Redemption code bound one-to-one to an account. Reusable: buyers use it to
+// fetch verification/TOTP codes for the purchased account over time.
+model CardKey {
+  id        String      @id @default(cuid())
+  code      String      @unique
+  accountId String      @unique
+  account   MailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+model MailGroup {
+  id        String        @id @default(cuid())
+  name      String        @unique
+  color     String?
+  sortOrder Int           @default(0)
+  createdAt DateTime      @default(now())
+  accounts  MailAccount[]
+}
+
+// Single-row app configuration (id fixed to "singleton").
+model AppConfig {
+  id                      String   @id @default("singleton")
+  // Keep-alive: force-refresh (rotate) refresh tokens so they don't hit the
+  // ~90-day inactivity limit. Runs every N *days* — rotation is intended but rare.
+  refreshEnabled          Boolean  @default(true)
+  refreshIntervalDays     Int      @default(7)
+  // Status check: read-only probe that reuses cached access tokens and does NOT
+  // rotate the refresh token. Safe to run frequently. Runs every N *minutes*.
+  statusCheckEnabled      Boolean  @default(true)
+  statusCheckIntervalMinutes Int   @default(360)
+  lastStatusCheckAt       DateTime?
+  // Verification-code polling (reads mail, reuses cached tokens, no rotation).
+  codePollEnabled         Boolean  @default(false)
+  codePollIntervalSeconds Int      @default(60)
+  lastCodePollAt          DateTime?
+  // Admin login password, scrypt-hashed ("salt:hashHex"). Null → fall back to
+  // the ADMIN_PASSWORD env var. Never returned to the client.
+  adminPasswordHash       String?
+  updatedAt               DateTime @updatedAt
+}
