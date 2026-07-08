@@ -132,7 +132,16 @@ MSA 刷新令牌**单次使用、每次刷新即轮换**；短时间内过多轮
 
 Docker 首次构建时 `Building xx/xx` 和 `exporting layers` 是正常进度；只有 `ERROR`、`failed`、`CANCELED`、`Restarting` 才需要按部署文档排查。
 
-Docker 服务器部署时可用 `sh deploy/scripts/setup-env.sh` 生成 `.env`，脚本会自动填好 Docker 数据库路径，并提示输入公网地址、`APP_SECRET` 与后台密码。
+Docker 服务器部署优先使用空库一键安装：
+
+```bash
+cd /opt
+git clone https://github.com/k-kedrick/outlook-mail-manager.git
+cd outlook-mail-manager
+sh deploy/scripts/install.sh
+```
+
+脚本支持反代、服务器 IP:端口、本地运行三种方式，会自动生成 `APP_SECRET`；按提示选择访问方式并输入后台密码即可。
 
 ## 公开发布注意事项
 

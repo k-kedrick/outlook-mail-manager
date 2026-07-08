@@ -3,6 +3,9 @@ set -eu
 
 cd "$(dirname "$0")/../.."
 
+APP_NAME="${APP_NAME:-outlook-mail-manager}"
+APP_PORT="${APP_PORT:-3005}"
+
 compose() {
   if docker compose version >/dev/null 2>&1; then
     docker compose "$@"
@@ -16,7 +19,7 @@ compose ps
 
 echo
 echo "== Recent app logs =="
-docker logs outlook-mail-manager --tail=80 || true
+docker logs "$APP_NAME" --tail=80 || true
 
 echo
 echo "== Local HTTP checks =="
@@ -50,8 +53,17 @@ wait_for_url() {
   return 1
 }
 
-wait_for_url "login" "http://127.0.0.1:3005/login"
-wait_for_url "redeem" "http://127.0.0.1:3005/redeem"
+wait_for_url "login" "http://127.0.0.1:${APP_PORT}/login"
+wait_for_url "redeem" "http://127.0.0.1:${APP_PORT}/redeem"
+
+public_app_url=""
+if [ -f .env ]; then
+  public_app_url="$(sed -n 's/^NEXT_PUBLIC_APP_URL="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' .env | tail -n 1)"
+fi
+
+if [ -n "$public_app_url" ] && [ "$public_app_url" != "http://localhost:${APP_PORT}" ]; then
+  echo "public app URL: $public_app_url"
+fi
 
 echo
 echo "== .env safety checks =="

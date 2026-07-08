@@ -3,6 +3,7 @@ node_modules
 out
 output
 data
+docker-compose.yml
 test-results
 .agents
 .claude

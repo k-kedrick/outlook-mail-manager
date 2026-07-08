@@ -56,43 +56,56 @@ npm start
 scripts\keep-alive.bat
 ```
 
-## Docker Compose 部署（推荐用于当前服务器）
+## Docker 一键部署（空库优先，推荐）
 
-你的服务器已有 `/opt + Docker Compose + Nginx + Let's Encrypt` 架构，建议使用独立目录和独立子域名：
+默认按空数据库部署，不迁移任何旧账号数据。重新运行安装脚本并确认 `RESET` 会删除 `data/`，也就是删除服务器上的全部账号、卡密、验证码缓存和 2FA 数据。
 
-- 项目目录：`/opt/outlook-mail-manager`
-- 访问域名：你的域名，例如 `https://mail.example.com`
-- 本机端口：`127.0.0.1:3005`
-- SQLite 数据目录：`/opt/outlook-mail-manager/data`
-
-部署命令：
+### 最简流程
 
 ```bash
 cd /opt
 git clone https://github.com/k-kedrick/outlook-mail-manager.git
 cd outlook-mail-manager
-cp docker-compose.example.yml docker-compose.yml
+sh deploy/scripts/install.sh
 ```
 
-生成 `.env`。脚本会自动写好 Docker 所需的固定配置，只需要输入公网地址、`APP_SECRET` 和后台密码；`APP_SECRET` 留空时会自动生成：
+脚本会让你选择访问方式：
+
+- `reverse-proxy`：推荐，绑定 `127.0.0.1:3005`，再用 Nginx/Caddy/面板反代。
+- `direct-ip`：绑定 `0.0.0.0:3005`，可直接访问 `http://服务器IP:3005`。
+- `local`：绑定 `127.0.0.1:3005`，只适合本机测试。
+
+脚本会自动生成 `APP_SECRET`；你只需要按提示选择访问方式/公网地址，并输入后台密码。脚本不会把密钥或密码打印出来。
+
+### 你的服务器示例
+
+反代部署到 `outlook.2963wang.shop`：
 
 ```bash
+cd /opt
+git clone https://github.com/k-kedrick/outlook-mail-manager.git
+cd outlook-mail-manager
+APP_DOMAIN=outlook.2963wang.shop INSTALL_NGINX=1 sh deploy/scripts/install.sh
+```
+
+脚本会写 Nginx 配置、执行 `nginx -t` 并 reload。HTTPS 仍建议手动执行：
+
+```bash
+certbot --nginx -d outlook.2963wang.shop
+```
+
+### 高级手动流程
+
+如果不想用一键脚本，可以手动生成配置：
+
+```bash
+cp docker-compose.example.yml docker-compose.yml
 sh deploy/scripts/setup-env.sh
+docker compose up -d --build
+bash deploy/scripts/check-deploy.sh
 ```
 
-生成后的 `.env` 结构如下：
-
-```env
-DATABASE_URL="file:/app/data/dev.db"
-APP_SECRET="replace-with-a-long-random-secret"
-ADMIN_PASSWORD="change-me"
-NEXT_PUBLIC_APP_URL="https://mail.example.com"
-KEEP_ALIVE_ENABLED="1"
-KEEP_ALIVE_INTERVAL_HOURS="168"
-NEXT_PUBLIC_KEEP_ALIVE_INTERVAL_HOURS="168"
-```
-
-启动。第一次构建会比较慢，`Building 13/19`、`exporting layers`、`docker:default` 都是正常进度，不是错误；看到 `Container outlook-mail-manager Started` 才算启动完成。
+第一次构建会比较慢，`Building 13/19`、`exporting layers`、`docker:default` 都是正常进度，不是错误；看到 `Container outlook-mail-manager Started` 才算启动完成。
 
 ```bash
 docker compose up -d --build
@@ -141,6 +154,17 @@ server {
 ```
 
 首次部署后再用 Certbot 或面板为你的域名申请 Let's Encrypt 证书。
+
+### 删除并重新空库部署
+
+以下命令会删除 Outlook 项目容器、镜像、项目目录和 `data/` 数据库：
+
+```bash
+cd /opt/outlook-mail-manager 2>/dev/null && docker compose down --remove-orphans || true
+docker rm -f outlook-mail-manager 2>/dev/null || true
+docker rmi outlook-mail-manager-outlook-mail-manager 2>/dev/null || true
+rm -rf /opt/outlook-mail-manager
+```
 
 更新：
 
