@@ -4,7 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/lib/secrets";
 
 // Whitelisted export columns, emitted in this fixed order regardless of the
-// order they appear in the query. Empty values are exported as the literal "error".
+// order they appear in the query. Rows are ordered by createdAt asc to match the
+// list display order. Empty values are exported as the literal "error".
 const FIELD_ORDER = ["email", "password", "clientId", "refreshToken", "cardKey", "totp"] as const;
 type Field = (typeof FIELD_ORDER)[number];
 
@@ -33,7 +34,8 @@ function valueFor(field: Field, a: ExportAccount): string {
 
 // Exports selected columns of the given accounts as a downloadable text file,
 // one account per line, chosen fields joined by "----" in the fixed column order,
-// ordered by selected id order when ids are provided, otherwise by email ascending.
+// always ordered by createdAt ascending to match the list display order
+// (independent of how the ids were selected/ordered on the client).
 // Empty fields become "error".
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -57,13 +59,10 @@ export async function GET(request: Request): Promise<Response> {
     const accounts = await prisma.mailAccount.findMany({
       where,
       include: { cardKey: true },
-      orderBy: { email: "asc" },
+      orderBy: { createdAt: "asc" },
     });
-    const orderedAccounts = ids.length
-      ? [...accounts].sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id))
-      : accounts;
 
-    const lines = orderedAccounts.map((a) =>
+    const lines = accounts.map((a) =>
       selected.map((f) => valueFor(f, a) || "error").join("----"),
     );
 
