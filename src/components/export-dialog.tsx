@@ -60,7 +60,7 @@ export function ExportDialog({
     >
       <p className="mb-3 text-xs text-muted">
         勾选要导出的字段，按固定顺序用 <code className="rounded bg-surface2 px-1 text-indigo-300">----</code> 拼接；某字段为空则该位置输出{" "}
-        <code className="rounded bg-surface2 px-1 text-rose-300">error</code>。导出按邮箱升序排列。
+        <code className="rounded bg-surface2 px-1 text-rose-300">error</code>。导出按列表顺序（导入/创建顺序）排列。
       </p>
       {hasSensitiveFields && (
         <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
