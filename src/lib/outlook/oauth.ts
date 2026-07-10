@@ -157,20 +157,21 @@ export async function getAccessToken(
   const expiresAt = new Date(Date.now() + (data.expires_in ?? 3600) * 1000);
   const now = new Date();
 
-  // A successful refresh means the refresh token is alive and its inactivity
-  // window has slid forward — record it and reset the validity countdown.
-  const ttlSeconds =
-    typeof data.refresh_token_expires_in === "number"
-      ? data.refresh_token_expires_in
-      : DEFAULT_REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60;
-  const update: Record<string, unknown> = {
-    refreshTokenExpiresAt: new Date(Date.now() + ttlSeconds * 1000),
-  };
-  // "上次刷新时间" should track only explicit keep-alive/refresh (forceRefresh).
-  // Read operations (status/mail/code) that rotate a cold access token still
-  // slide the 90-day expiry above, but must NOT bump refreshTokenUpdatedAt.
+  const update: Record<string, unknown> = {};
+  // "上次刷新" (refreshTokenUpdatedAt) and "令牌有效期" (refreshTokenExpiresAt) must
+  // both reflect ONLY an explicit keep-alive/refresh (forceRefresh). A read
+  // (status/mail/code) that rotates a cold access token still persists the rotated
+  // refresh token below so it keeps working, but must NOT touch either field —
+  // otherwise the "令牌有效期" countdown would silently reset to 90 天 on every read.
   if (forceRefresh) {
+    // A successful forced refresh slid the inactivity window forward — reset the
+    // validity countdown and stamp the refresh time.
+    const ttlSeconds =
+      typeof data.refresh_token_expires_in === "number"
+        ? data.refresh_token_expires_in
+        : DEFAULT_REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60;
     update.refreshTokenUpdatedAt = now;
+    update.refreshTokenExpiresAt = new Date(Date.now() + ttlSeconds * 1000);
   }
   if (kind === "graph") {
     update.graphTokenCipher = encryptSecret(accessToken);
@@ -199,9 +200,9 @@ export async function getAccessToken(
   // Keep the in-memory object consistent for callers reusing it.
   if (forceRefresh) {
     account.refreshTokenUpdatedAt = now;
-  }
-  if (update.refreshTokenExpiresAt instanceof Date) {
-    account.refreshTokenExpiresAt = update.refreshTokenExpiresAt;
+    if (update.refreshTokenExpiresAt instanceof Date) {
+      account.refreshTokenExpiresAt = update.refreshTokenExpiresAt;
+    }
   }
   if (kind === "graph") {
     account.graphTokenCipher = update.graphTokenCipher as string;
