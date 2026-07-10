@@ -133,14 +133,14 @@ deploy/nginx/app.example.conf   Nginx 反代模板
 - **身份验证器(TOTP)**：`src/lib/totp.ts` 用 Node 内置 crypto 自实现 RFC 6238（无第三方依赖），已用 RFC 官方测试向量验证过；密钥复用 `encryptSecret` 加密存 `MailAccount.totpSecretCipher`。导入弹窗**同一个窗口**支持三格式（按段数自动识别）：`账号----密码----clientid----刷新令牌`(4段)、`…----刷新令牌----2FA密钥`(5段)、`账号----2FA密钥`(2段，仅给已存在账号补2FA、不动凭证)。
 
 **第七期 · 六项打磨（当前最新，已验证）**
-1. **"上次刷新时间"语义修复（重要）**：`oauth.ts` 的 `getAccessToken` 原来只要做 token exchange 就无条件写 `refreshTokenUpdatedAt`，导致读操作（取验证码/读信/检测）在冷缓存下轮换 access token 时误改"上次刷新时间"。**已改为仅 `forceRefresh` 时才写 `refreshTokenUpdatedAt`**；读触发的轮换仍写 `refreshTokenCipher`/`refreshTokenExpiresAt`（保有效性与90天时钟），但不动"上次刷新时间"。→ 该列现在**只反映显式「刷新令牌」/保活**。注意 `keep-alive.ts` 的陈旧度筛选就是基于 `refreshTokenUpdatedAt`，此改动让它更准（不再被读操作误判"新鲜"）。
+1. **"上次刷新时间"语义修复（重要）**：`oauth.ts` 的 `getAccessToken` 原来只要做 token exchange 就无条件写 `refreshTokenUpdatedAt`，导致读操作（取验证码/读信/检测）在冷缓存下轮换 access token 时误改"上次刷新时间"。**已改为仅 `forceRefresh` 时才写 `refreshTokenUpdatedAt`**；读触发的轮换仍写 `refreshTokenCipher`（保令牌可用），但不动"上次刷新时间"。→ 该列现在**只反映显式「刷新令牌」/保活**。注意 `keep-alive.ts` 的陈旧度筛选就是基于 `refreshTokenUpdatedAt`，此改动让它更准（不再被读操作误判"新鲜"）。（**注**：本条当时仍保留"读触发轮换写 `refreshTokenExpiresAt`"，第十期已一并去除，见下。）
 2. 选中操作条按钮改名：检测账号 / 刷新令牌 / 获取验证码 / 生成卡密 / 导出 / 删除。
 3. 删掉无选中态的"检测全部/刷新全部令牌/获取全部验证码/导出全部"四个批量按钮（要全量先用表头全选）。
 4. **导出重做**：`导出` 打开列勾选弹窗（账号/密码/clientId/刷新令牌/卡密/2FA密钥），后端 `accounts/export` 按 `?fields=` 白名单取列、**按固定列序**用 `----` 拼接、**空字段输出字面量 `error`**、**严格按邮箱升序**（`orderBy email asc`，Prisma `in` 不保序所以靠它定序）。
 5. 删掉右上"导出卡密"独立按钮及其路由（卡密并入第4点的可选列）。
 6. **管理员改密**：`AppConfig` 加 `adminPasswordHash`（scrypt，随机salt、不用APP_SECRET派生）；`auth.ts` 新增 `verifyAdminPassword`（有hash用hash、否则回退env）；`/api/auth/password` 改密（校验当前密码）；`settings` GET/PUT 剔除该hash不外泄；设置弹窗标题「定时任务设置」→「设置」，底部加"修改管理员密码"区。
 
-**第八期 · 取码、2FA、批量管理与 UI 收尾（当前最新，已验证）**
+**第八期 · 取码、2FA、批量管理与 UI 收尾（已验证）**
 1. **验证码正则误抓 `Enter` 已修复**：`codes.ts` 现在数字验证码优先，允许 `code` 与真实数字之间夹短引导词；通用字母数字码不再大小写放宽，避免把 `Enter` / `Your` 当验证码。已用 ChatGPT `736276`、中文 `208857`、英文 `123456`、大写字母数字 `AB12CD` 样本验证。
 2. **导出所选顺序已修复**：带 `ids` 导出时按前端传入 id 顺序输出；无 ids 时仍按邮箱升序。
 3. **列表排序改为导入/创建顺序**：账号列表按 `createdAt asc` 显示，后续追加导入会排在已有账号后面。
@@ -149,6 +149,15 @@ deploy/nginx/app.example.conf   Nginx 反代模板
 6. **批量分组补齐**：选中操作条新增「分组」，可批量移动到已有分组或设为未分组，只更新 `MailAccount.groupId`。
 7. **表头选择与操作区优化**：选中操作区固定占位，搜索/筛选/表格不再跳动；表头选择框支持当前可见列表的全选/反选/取消，并保留三态 UI。
 8. **TOTP 轮询降噪与导出提示**：账号抽屉和 `/redeem` 页面隐藏时暂停 TOTP rollover 请求，恢复可见时再取一次；导出弹窗勾选 RefreshToken 或 2FA 密钥时显示敏感字段提示。
+
+> 注：**第九期（导出行序修复）** 在另一条分支 / PR（`fix/export-row-order`）里，本 PR 不含；两者独立，合并顺序不影响代码。
+
+**第十期 · "令牌有效期"只跟显式刷新走（本 PR，已验证）**
+- **现象**：点"获取验证码"后，某账号"令牌有效期"跳回 90 天，但"上次刷新"没变；截图里所有账号"上次刷新"都是同一时刻，"令牌有效期"却有 89/90 差异。
+- **根因**：`oauth.ts` 的 `getAccessToken` 里，`refreshTokenExpiresAt`（驱动"令牌有效期"）在**任何一次成功 token 交换**时都被重置为"现在+90天"，包括读操作（取验证码/读信/冷缓存检测状态/公开 `/redeem` 取码）在缓存过期时触发的轮换。而 `refreshTokenUpdatedAt`（"上次刷新"）第七期起只在 `forceRefresh` 写。两字段被读操作拆开，导致"令牌有效期"被读操作静默重置。同一根因还影响列表「需刷新」筛选（`accounts/route.ts` 按 `refreshTokenExpiresAt`）和 `keep-alive.ts` 保活筛选（按 `refreshTokenUpdatedAt`）——两套字段本应一致却被读操作拆开。
+- **修复**：`refreshTokenExpiresAt` 与 `refreshTokenUpdatedAt` 一样，**只在 `forceRefresh`（显式「刷新令牌」/保活）时才写**。读操作仍持久化轮换后的 `refreshTokenCipher`（否则令牌失效），但不碰这两个展示/策略字段。改后"令牌有效期""上次刷新""需刷新筛选""保活筛选"四处全部只跟"显式刷新/导入"走，完全一致。
+- **权衡（重要，记住别当 bug）**：改后"令牌有效期"是**保守下界**——只靠"取验证码"续命、从不显式「刷新令牌」的账号，即使真实令牌因读操作一直在轮换、并未失效，"令牌有效期"仍会从导入时刻起倒数、最终显示危险；点一次「刷新令牌」即恢复 90 天。这是刻意的（符合"有效期只和刷新令牌有关"的语义，且偏保守=更安全），不是新 bug。
+- **验证**：mock `fetch`（不触网、不轮换真实令牌）+ 拦截 `prisma.update`（不写库）跑真实 `getAccessToken`：读路径不写 `refreshTokenExpiresAt`/`refreshTokenUpdatedAt`、仍写 access token 缓存与轮换后的 `refreshTokenCipher`；`forceRefresh` 路径写两字段且有效期≈90天。`tsc --noEmit` 通过。
 
 ## 已知遗留问题 / 维护项（新会话别重新"发现"一遍）
 
