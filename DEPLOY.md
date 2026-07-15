@@ -192,6 +192,24 @@ git pull
 docker compose up -d --build
 ```
 
+### 更新后代码没生效？强制不走缓存重建
+
+个别服务器的 Docker 用的是旧版 builder（构建时会提示 `Docker Compose is configured to build using Bake, but buildx isn't installed`）。这种情况下 `docker compose up -d --build` 的 `COPY . .` 缓存判定可能失灵——即使 `git pull` 已经拉到新代码，构建仍全程命中缓存、产出**和上次字节相同的旧镜像**，于是更新看似成功、实则容器仍在跑旧代码。
+
+判断方法：看构建日志结尾那行 `exporting manifest sha256:`。如果它和上次构建**完全一样**，且 `COPY . .` / `npm run build` 都显示 `CACHED`，就是踩到了这个坑。
+
+解决：强制不走缓存重建（数据库在挂载的 `data/`，重建不受影响）：
+
+```bash
+cd /opt/outlook-mail-manager
+docker compose build --no-cache
+docker compose up -d
+docker compose ps                       # 期望 Up (healthy)
+curl -I http://127.0.0.1:3005/login     # 期望 200
+```
+
+重建后 `exporting manifest sha256:` 应变成一个**新值**，即代表新代码已真正编入镜像。`--no-cache` 会重跑 `npm ci` 与 `npm run build`，比普通更新慢几分钟属正常，别中途按 `Ctrl+C`。
+
 ## 数据备份
 
 ```bash
