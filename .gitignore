@@ -3,8 +3,12 @@ node_modules
 out
 output
 data
+backups
+secrets
 docker-compose.yml
 test-results
+playwright-report
+coverage
 .agents
 .claude
 .codex
@@ -15,7 +19,6 @@ test-results
 *.bak
 prisma/dev.db
 prisma/dev.db.bak
-prisma/migrations/**/migration_lock.toml
 next-env.d.ts
 tsconfig.tsbuildinfo
 .DS_Store
