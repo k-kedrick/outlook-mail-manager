@@ -87,12 +87,13 @@ async function outlookInbox(
   limit: number,
   withBody: boolean,
   folder: MailFolder,
+  offset: number,
 ): Promise<MailMessage[]> {
   const select = ["Id", "Subject", "From", "ReceivedDateTime", "BodyPreview", "IsRead"];
   if (withBody) select.push("Body");
   const path =
     `/me/MailFolders/${outlookFolder(folder)}/messages` +
-    `?$top=${limit}&$orderby=ReceivedDateTime%20desc&$select=${select.join(",")}`;
+    `?$top=${limit}&$skip=${offset}&$orderby=ReceivedDateTime%20desc&$select=${select.join(",")}`;
   const data = await outlookGet<{ value?: RestMessage[] }>(account, path);
   return (data.value ?? []).map((m) => mapRest(m, withBody));
 }
@@ -155,12 +156,13 @@ async function graphInbox(
   limit: number,
   withBody: boolean,
   folder: MailFolder,
+  offset: number,
 ): Promise<MailMessage[]> {
   const select = ["id", "subject", "from", "receivedDateTime", "bodyPreview", "isRead"];
   if (withBody) select.push("body");
   const path =
     `/me/mailFolders/${graphFolder(folder)}/messages` +
-    `?$top=${limit}&$orderby=receivedDateTime%20desc&$select=${select.join(",")}`;
+    `?$top=${limit}&$skip=${offset}&$orderby=receivedDateTime%20desc&$select=${select.join(",")}`;
   const data = await graphGet<{ value?: GraphMessage[] }>(account, path);
   return (data.value ?? []).map((m) => mapGraph(m, withBody));
 }
@@ -208,15 +210,16 @@ export async function fetchInbox(
     limit = 20,
     withBody = false,
     folder = "inbox",
-  }: { limit?: number; withBody?: boolean; folder?: MailFolder } = {},
+    offset = 0,
+  }: { limit?: number; withBody?: boolean; folder?: MailFolder; offset?: number } = {},
 ): Promise<InboxResult> {
   const errors: Partial<Record<MailSource, unknown>> = {};
   for (const proto of protocolOrder(account)) {
     try {
       const messages =
         proto === "outlook"
-          ? await outlookInbox(account, limit, withBody, folder)
-          : await graphInbox(account, limit, withBody, folder);
+          ? await outlookInbox(account, limit, withBody, folder, offset)
+          : await graphInbox(account, limit, withBody, folder, offset);
       await persistProtocol(account, proto);
       return { source: proto, messages };
     } catch (err) {
@@ -227,15 +230,26 @@ export async function fetchInbox(
 }
 
 export type FolderedMailMessage = MailMessage & { folder: MailFolder };
+export type FolderPage = { loaded: number; nextOffset: number; hasMore: boolean };
 
 /** Fetch Inbox and Junk concurrently and merge into one time-sorted list. Junk failures degrade silently. */
 export async function fetchInboxAndJunk(
   account: MailAccount,
-  { limit = 20, withBody = false }: { limit?: number; withBody?: boolean } = {},
-): Promise<{ source: MailSource; messages: FolderedMailMessage[]; junkError: string | null }> {
+  {
+    limit = 20,
+    withBody = false,
+    inboxOffset = 0,
+    junkOffset = 0,
+  }: { limit?: number; withBody?: boolean; inboxOffset?: number; junkOffset?: number } = {},
+): Promise<{
+  source: MailSource;
+  messages: FolderedMailMessage[];
+  junkError: string | null;
+  folders: { inbox: FolderPage; junk: FolderPage };
+}> {
   const [inboxRes, junkRes] = await Promise.allSettled([
-    fetchInbox(account, { limit, withBody, folder: "inbox" }),
-    fetchInbox(account, { limit, withBody, folder: "junk" }),
+    fetchInbox(account, { limit, withBody, folder: "inbox", offset: inboxOffset }),
+    fetchInbox(account, { limit, withBody, folder: "junk", offset: junkOffset }),
   ]);
 
   if (inboxRes.status === "rejected") throw inboxRes.reason;
@@ -252,7 +266,23 @@ export async function fetchInboxAndJunk(
   const merged = [...inboxMessages, ...junkMessages].sort(
     (a, b) => new Date(b.receivedAt ?? 0).getTime() - new Date(a.receivedAt ?? 0).getTime(),
   );
-  return { source: inboxRes.value.source, messages: merged, junkError };
+  return {
+    source: inboxRes.value.source,
+    messages: merged,
+    junkError,
+    folders: {
+      inbox: {
+        loaded: inboxMessages.length,
+        nextOffset: inboxOffset + inboxMessages.length,
+        hasMore: inboxMessages.length === limit,
+      },
+      junk: {
+        loaded: junkMessages.length,
+        nextOffset: junkOffset + junkMessages.length,
+        hasMore: !junkError && junkMessages.length === limit,
+      },
+    },
+  };
 }
 
 export async function fetchMessage(
