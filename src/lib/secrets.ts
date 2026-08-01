@@ -6,12 +6,12 @@ import {
   scryptSync,
   timingSafeEqual,
 } from "crypto";
+import { appSecret } from "@/lib/server-env";
 
 const CIPHER_VERSION = "v1";
 
 function getEncryptionKey(): Buffer {
-  const secret = process.env.APP_SECRET || "development-only-change-this-secret";
-  return createHash("sha256").update(secret).digest();
+  return createHash("sha256").update(appSecret()).digest();
 }
 
 export function encryptSecret(value: string): string {

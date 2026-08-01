@@ -8,7 +8,13 @@ import { Button } from "./ui/button";
 import type { Account, MailMessage } from "./types";
 
 type Reveal = { email: string; password: string; clientId: string; refreshToken: string };
-type Inbox = { source: "graph" | "outlook"; messages: MailMessage[]; junkError: string | null };
+type FolderPage = { loaded: number; nextOffset: number; hasMore: boolean };
+type Inbox = {
+  source: "graph" | "outlook" | "imap";
+  messages: MailMessage[];
+  junkError: string | null;
+  folders: { inbox: FolderPage; junk: FolderPage };
+};
 type CodeResult = {
   code: string | null;
   codeAt: string | null;
@@ -173,6 +179,25 @@ export function AccountDrawer({
       setInbox(data);
       setOpenMsg(null);
       onChanged();
+    });
+
+  const loadMoreMail = () =>
+    run("inbox-more", async () => {
+      if (!inbox) return;
+      const params = new URLSearchParams({
+        limit: "20",
+        inboxOffset: String(inbox.folders.inbox.nextOffset),
+        junkOffset: String(inbox.folders.junk.nextOffset),
+      });
+      const data = await api.get<Inbox>(`/api/accounts/${account.id}/mail?${params}`);
+      const unique = new Map<string, MailMessage>();
+      for (const message of [...inbox.messages, ...data.messages]) {
+        unique.set(`${message.source}:${message.folder}:${message.id}`, message);
+      }
+      const messages = [...unique.values()].sort(
+        (a, b) => new Date(b.receivedAt ?? 0).getTime() - new Date(a.receivedAt ?? 0).getTime(),
+      );
+      setInbox({ ...data, messages, junkError: data.junkError ?? inbox.junkError });
     });
 
   const doCode = () =>
@@ -437,7 +462,10 @@ export function AccountDrawer({
               <section className="overflow-hidden rounded-xl border border-line bg-surface2/40">
                 <div className="flex items-center justify-between border-b border-line px-4 py-2">
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                    收件箱 + 垃圾邮件（{inbox.messages.length}）
+                    收件箱 {inbox.messages.filter((m) => m.folder === "inbox").length}
+                    {inbox.folders.inbox.hasMore ? "+" : ""} + 垃圾邮件{" "}
+                    {inbox.messages.filter((m) => m.folder === "junk").length}
+                    {inbox.folders.junk.hasMore ? "+" : ""}
                   </h3>
                   <div className="flex items-center gap-2">
                     {inbox.junkError && (
@@ -453,7 +481,7 @@ export function AccountDrawer({
                 ) : (
                   <ul className="divide-y divide-line/70">
                     {inbox.messages.map((m) => (
-                      <li key={m.id}>
+                      <li key={`${m.source}:${m.folder}:${m.id}`}>
                         <button
                           onClick={() => openMessage(m)}
                           className="block w-full px-4 py-2 text-left transition-colors hover:bg-accent/[0.06]"
@@ -475,6 +503,18 @@ export function AccountDrawer({
                       </li>
                     ))}
                   </ul>
+                )}
+                {(inbox.folders.inbox.hasMore || inbox.folders.junk.hasMore) && (
+                  <div className="border-t border-line p-3 text-center">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={busy === "inbox-more"}
+                      onClick={loadMoreMail}
+                    >
+                      加载更多
+                    </Button>
+                  </div>
                 )}
               </section>
             )

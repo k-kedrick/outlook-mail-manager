@@ -1,5 +1,7 @@
 # Outlook 邮箱管理系统
 
+架构边界和关键安全不变量见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
 批量管理 Outlook / MSA 账号，在线读取收件箱、自动提取验证码、检测账号状态，并低频刷新令牌防止失效。
 
 账号格式（每行一个）：
@@ -50,6 +52,14 @@ npm run dev                 # 启动，访问 http://localhost:3005
 | `DATABASE_URL` | SQLite 路径，默认 `file:./dev.db` |
 | `APP_SECRET` | 加密密钥。**修改后已存储的密文将无法解密** |
 | `ADMIN_PASSWORD` | 管理后台登录口令；如果已在设置中改过密码，则优先使用数据库里的哈希 |
+
+生产环境会拒绝缺失、少于 32 字符或使用公开默认值的 `APP_SECRET`，也会拒绝 `ADMIN_PASSWORD=change-me`。修改后台密码后，所有浏览器的旧登录状态会立即失效。
+
+## 健康检查与安全接口
+
+- `GET /api/health` 同时检查应用与 SQLite，适用于 Docker/Nginx 监控。
+- 登录、公开卡密、验证码和 TOTP 接口包含应用侧限流；公网仍建议叠加 Cloudflare 限流。
+- API 响应默认禁止缓存，公开接口不会返回 Outlook、Graph 或数据库原始错误。
 
 ## 功能
 
@@ -112,7 +122,7 @@ MSA 刷新令牌**单次使用、每次刷新即轮换**；短时间内过多轮
 | 定时开关 | 设置 → 自动检测状态 | 设置 → 自动刷新（保活） |
 
 - **状态检测**用缓存的访问令牌（~55 分钟有效）发一个只读请求探活，**零轮换**；仅当缓存过期才刷新一次，因此**无论检测多频繁，单账号轮换上限 ≈ 每小时 1 次**（等同一个正常活跃客户端），安全。
-- **轮换护栏**：任何路径对同一账号**5 分钟内不会重复打令牌端点**（`MIN_ROTATION_INTERVAL_MS`），防连点/并发风暴；批量操作带抖动，避免同 IP 同时大量认证。
+- **轮换护栏**：同一账号、同一资源类型 5 分钟内不会重复换取访问令牌；显式保活继续使用账号级 5 分钟保护。不同 audience 的换取会串行执行，禁止 Graph/Outlook 错用彼此的 Access Token。
 - **保活**（会轮换）保持每 N 天、仅刷到期账号；间隔不要设太短。
 - 读信 / 验证码轮询同样复用缓存、不额外轮换，成功/失败也会顺带更新状态。
 
@@ -120,16 +130,12 @@ MSA 刷新令牌**单次使用、每次刷新即轮换**；短时间内过多轮
 
 - 令牌端点：`https://login.microsoftonline.com/consumers/oauth2/v2.0/token`（公有客户端，无 secret），
   失败时回退 `https://login.live.com/oauth20_token.srf`。每次刷新都会**轮换刷新令牌**，系统自动回写加密的新令牌。
-- **读信走 HTTPS，不用 IMAP**：这些账号的 client（如 `9e5f94bc-…`）只授权 `outlook.office.com`
-  资源（其令牌含 `Mail.ReadWrite` 等），并**未授权 Graph**，且 Outlook 对这些账号**拒绝 IMAP XOAUTH2 登录**。
-  因此读信使用 **Outlook REST API**（`https://outlook.office.com/api/v2.0/me/MailFolders/{Inbox|JunkEmail}/messages`），
-  纯 HTTPS，可穿过代理/VPN。scope：`https://outlook.office.com/IMAP.AccessAsUser.All offline_access`
-  （实际会授予含 Mail.ReadWrite 的整组权限）。
-- 若某账号改用 Graph，系统会自动回退到 `https://graph.microsoft.com/v1.0`（scope `Mail.Read`）。
-  每个账号首次成功后会**记住可用协议**（`mailProtocol` = outlook / graph），后续直接用它。
-- 令牌均为 `outlook.office.com` 资源令牌，无法用于 Graph；两者 scope/audience 不同，代码里分别换取。
-
-> 注：`imapflow` / `mailparser` 依赖已不再使用（保留在 `package.json` 中不影响运行，可择机移除）。
+- 取件支持三条通道：Outlook REST API、Microsoft Graph API 和 Outlook IMAP OAuth2。
+- 未知账号按 **Outlook REST → Graph → IMAP** 尝试；已成功的账号优先使用记忆的 `mailProtocol`，失败时自动回退其他通道。
+- Outlook REST 使用 `https://outlook.office.com/api/v2.0`；Graph 使用 `https://graph.microsoft.com/v1.0`；IMAP 使用 `outlook.office365.com:993` + TLS + OAuth2，不使用邮箱密码。
+- IMAP 收件箱固定使用 `INBOX`；垃圾邮件优先识别 `\\Junk` 特殊目录，并兼容 `Junk Email`、`Junk`、`Spam`。
+- Outlook/IMAP 与 Graph 的 scope/audience 不同，访问令牌分别加密缓存；跨 audience 请求只串行等待，不共享 Access Token。
+- IMAP 列表只读取 Envelope/UID/Flags；读取正文时限制下载大小且不主动下载附件。
 
 ## 卡密兑换页 `/redeem`
 

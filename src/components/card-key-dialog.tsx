@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { api } from "@/lib/client";
+import type { BatchFeedback } from "@/lib/batch-feedback";
 import { Button } from "./ui/button";
+import { BatchResultBanner, failedBatchResult, type BatchResult } from "./ui/batch-result";
 import { Dialog } from "./ui/dialog";
 import { fieldClass } from "./ui/field";
 
@@ -11,10 +13,12 @@ type GenerateResult = {
   regenerated: number;
   skipped: number;
   total: number;
+  feedback: BatchFeedback;
 };
 
 type UnbindResult = {
   unbound: number;
+  feedback: BatchFeedback;
 };
 
 export function CardKeyDialog({
@@ -29,24 +33,21 @@ export function CardKeyDialog({
   const [prefix, setPrefix] = useState("");
   const [regenerate, setRegenerate] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<GenerateResult | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [result, setResult] = useState<BatchResult | null>(null);
 
   async function submit(): Promise<void> {
     setLoading(true);
-    setError(null);
-    setMessage(null);
+    setResult(null);
     try {
       const res = await api.post<GenerateResult>("/api/cardkeys/generate", {
         ids,
         prefix: prefix.trim(),
         regenerate,
       });
-      setResult(res);
+      setResult({ ...res.feedback, title: "卡密生成完成", completedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }) });
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "生成失败");
+      setResult(failedBatchResult("卡密生成失败", ids.length, e));
     } finally {
       setLoading(false);
     }
@@ -56,15 +57,13 @@ export function CardKeyDialog({
     if (!ids.length) return;
     if (!confirm(`确认删除选中 ${ids.length} 个账号的卡密？此操作不会删除账号。`)) return;
     setLoading(true);
-    setError(null);
     setResult(null);
-    setMessage(null);
     try {
       const res = await api.post<UnbindResult>("/api/cardkeys/unbind", { ids });
-      setMessage(`已删除 / 解绑 ${res.unbound} 个账号的卡密。`);
+      setResult({ ...res.feedback, title: "卡密解绑完成", completedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }) });
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "删除失败");
+      setResult(failedBatchResult("卡密解绑失败", ids.length, e));
     } finally {
       setLoading(false);
     }
@@ -117,20 +116,7 @@ export function CardKeyDialog({
         <p className="mt-1 text-[11px] text-dim">未勾选时，已绑定卡密的账号会被跳过。</p>
       )}
 
-      {error && <p className="mt-3 text-sm text-rose-400">{error}</p>}
-      {message && (
-        <div className="mt-4 rounded-lg border border-line bg-surface2/60 p-3 text-xs text-slate-200">
-          {message}
-        </div>
-      )}
-
-      {result && (
-        <div className="mt-4 rounded-lg border border-line bg-surface2/60 p-3 text-xs text-slate-200">
-          新生成 <span className="text-emerald-300">{result.generated}</span> 个，重新生成{" "}
-          <span className="text-indigo-300">{result.regenerated}</span> 个，跳过{" "}
-          <span className="text-amber-300">{result.skipped}</span> 个。
-        </div>
-      )}
+      {result && <div className="mt-4"><BatchResultBanner result={result} onClose={() => setResult(null)} /></div>}
     </Dialog>
   );
 }

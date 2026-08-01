@@ -15,20 +15,30 @@ export type CodeFetchResult = {
   error: string | null;
 };
 
-const SCAN_LIMIT = 8;
+const SCAN_PAGE_SIZE = 20;
+const MAX_SCAN_PER_FOLDER = 50;
+
+async function scanFolder(account: MailAccount, folder: "inbox" | "junk") {
+  for (let offset = 0; offset < MAX_SCAN_PER_FOLDER; offset += SCAN_PAGE_SIZE) {
+    const limit = Math.min(SCAN_PAGE_SIZE, MAX_SCAN_PER_FOLDER - offset);
+    const page = await fetchInbox(account, { limit, offset, withBody: true, folder });
+    const hit = findLatestCode(page.messages);
+    if (hit) return hit;
+    if (page.messages.length < limit) return null;
+  }
+  return null;
+}
 
 /** Scan INBOX and Junk concurrently, returning the newest verification code across both. Throws on INBOX read failure. */
 export async function findLatestCodeAcrossFolders(
   account: MailAccount,
 ): Promise<{ message: MailMessage; code: string } | null> {
-  const [inbox, junk] = await Promise.all([
-    fetchInbox(account, { limit: SCAN_LIMIT, withBody: true, folder: "inbox" }),
-    fetchInbox(account, { limit: SCAN_LIMIT, withBody: true, folder: "junk" }).catch(() => null),
+  const [inboxHit, junkHit] = await Promise.all([
+    scanFolder(account, "inbox"),
+    scanFolder(account, "junk").catch(() => null),
     // Junk folder may not exist / not accessible — ignore its failure.
   ]);
 
-  const inboxHit = findLatestCode(inbox.messages);
-  const junkHit = junk ? findLatestCode(junk.messages) : null;
   if (!inboxHit && !junkHit) return null;
   if (inboxHit && !junkHit) return { message: inboxHit.message, code: inboxHit.candidate.code };
   if (!inboxHit && junkHit) return { message: junkHit.message, code: junkHit.candidate.code };

@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { buildBatchFeedback } from "@/lib/batch-feedback";
 import { Button } from "./ui/button";
+import { BatchResultBanner, type BatchResult } from "./ui/batch-result";
 import { Dialog } from "./ui/dialog";
 
 // Fixed output order — checked columns are emitted in this order, joined by "----".
@@ -30,17 +32,60 @@ export function ExportDialog({
     cardKey: false,
     totp: false,
   });
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<BatchResult | null>(null);
 
   const selectedFields = COLUMNS.filter((c) => checked[c.key]).map((c) => c.key);
   const hasSensitiveFields = Boolean(checked.refreshToken || checked.totp);
 
-  function exportNow(): void {
+  async function exportNow(): Promise<void> {
     if (!selectedFields.length || !ids.length) return;
+    setLoading(true);
+    setResult(null);
     const params = new URLSearchParams();
     params.set("ids", ids.join(","));
     params.set("fields", selectedFields.join(","));
-    window.open(`/api/accounts/export?${params.toString()}`, "_blank");
-    onClose();
+    let responseRequestId: string | null = null;
+    try {
+      const response = await fetch(`/api/accounts/export?${params.toString()}`);
+      const requestId = response.headers.get("X-Request-Id") ?? crypto.randomUUID();
+      responseRequestId = requestId;
+      if (!response.ok) throw new Error("EXPORT_FAILED");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `accounts-${Date.now()}.txt`;
+      link.click();
+      URL.revokeObjectURL(url);
+      const exported = Number(response.headers.get("X-Exported-Count") ?? ids.length);
+      const missing = Math.max(0, ids.length - exported);
+      const issues = Array.from({ length: missing }, (_, index) => ({
+        id: `missing-${index + 1}`,
+        outcome: "not_found" as const,
+        reasonCode: "ACCOUNT_NOT_FOUND",
+        message: "账号不存在或已删除。",
+      }));
+      setResult({
+        ...buildBatchFeedback({ requestId, requested: ids.length, succeeded: exported, issues }),
+        title: "账号导出完成",
+        completedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+      });
+    } catch {
+      const requestId = responseRequestId ?? crypto.randomUUID();
+      setResult({
+        ...buildBatchFeedback({
+          requestId,
+          requested: ids.length,
+          succeeded: 0,
+          issues: [{ outcome: "failed", reasonCode: "EXPORT_FAILED", message: "导出失败，请使用请求编号查询日志。" }],
+        }),
+        title: "账号导出失败",
+        completedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+      });
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -52,7 +97,7 @@ export function ExportDialog({
           <Button variant="ghost" onClick={onClose}>
             取消
           </Button>
-          <Button variant="primary" onClick={exportNow} disabled={!selectedFields.length}>
+          <Button variant="primary" onClick={exportNow} loading={loading} disabled={!selectedFields.length}>
             导出
           </Button>
         </>
@@ -83,6 +128,7 @@ export function ExportDialog({
           </label>
         ))}
       </div>
+      {result && <div className="mt-4"><BatchResultBanner result={result} onClose={() => setResult(null)} /></div>}
     </Dialog>
   );
 }

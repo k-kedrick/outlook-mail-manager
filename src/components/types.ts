@@ -43,7 +43,7 @@ export type Group = {
 
 export type MailMessage = {
   id: string;
-  source: "graph" | "outlook";
+  source: "graph" | "outlook" | "imap";
   folder?: "inbox" | "junk";
   from: string;
   fromName: string | null;

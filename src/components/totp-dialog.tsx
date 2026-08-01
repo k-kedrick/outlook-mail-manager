@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { api } from "@/lib/client";
+import type { BatchFeedback } from "@/lib/batch-feedback";
 import { Button } from "./ui/button";
+import { BatchResultBanner, failedBatchResult, type BatchResult } from "./ui/batch-result";
 import { Dialog } from "./ui/dialog";
 import { fieldBase } from "./ui/field";
 
@@ -14,10 +16,12 @@ type ImportResult = {
   total: number;
   duplicateInInput: number;
   invalid: { line: number; raw: string; reason: string }[];
+  feedback: BatchFeedback;
 };
 
 type RemoveResult = {
   removed: number;
+  feedback: BatchFeedback;
 };
 
 export function TotpDialog({
@@ -31,23 +35,19 @@ export function TotpDialog({
 }): React.ReactNode {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [result, setResult] = useState<ImportResult | null>(null);
+  const [result, setResult] = useState<BatchResult | null>(null);
 
   const lineCount = useMemo(() => text.split(/\r?\n/).filter((l) => l.trim()).length, [text]);
 
   async function importTotp(): Promise<void> {
     setLoading("import");
-    setError(null);
-    setMessage(null);
     setResult(null);
     try {
       const res = await api.post<ImportResult>("/api/accounts/import", { text });
-      setResult(res);
+      setResult({ ...res.feedback, title: "身份验证器导入完成", completedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }) });
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "导入失败");
+      setResult(failedBatchResult("身份验证器导入失败", lineCount, e));
     } finally {
       setLoading(null);
     }
@@ -57,15 +57,13 @@ export function TotpDialog({
     if (!ids.length) return;
     if (!confirm(`确认删除选中 ${ids.length} 个账号的身份验证器密钥？此操作不会删除账号。`)) return;
     setLoading("remove");
-    setError(null);
-    setMessage(null);
     setResult(null);
     try {
       const res = await api.post<RemoveResult>("/api/accounts/totp/unbind", { ids });
-      setMessage(`已删除 ${res.removed} 个账号的身份验证器密钥。`);
+      setResult({ ...res.feedback, title: "身份验证器解绑完成", completedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }) });
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "删除失败");
+      setResult(failedBatchResult("身份验证器解绑失败", ids.length, e));
     } finally {
       setLoading(null);
     }
@@ -106,37 +104,7 @@ export function TotpDialog({
       />
       <p className="mt-2 text-xs text-muted">检测到 {lineCount} 行</p>
 
-      {error && <p className="mt-3 text-sm text-rose-400">{error}</p>}
-      {message && (
-        <div className="mt-4 rounded-lg border border-line bg-surface2/60 p-3 text-xs text-slate-200">
-          {message}
-        </div>
-      )}
-      {result && (
-        <div className="mt-4 rounded-lg border border-line bg-surface2/60 p-3 text-xs">
-          <p className="text-slate-200">
-            补充 / 替换身份验证器 <span className="text-teal">{result.totpUpdated}</span> 个；输入内重复{" "}
-            {result.duplicateInInput} 个。
-          </p>
-          {result.notFound.length > 0 && (
-            <p className="mt-1 text-amber-300">
-              以下 {result.notFound.length} 个邮箱不存在、无法补充 2FA：{result.notFound.join("、")}
-            </p>
-          )}
-          {result.invalid.length > 0 && (
-            <div className="mt-2">
-              <p className="text-rose-400">无效行 {result.invalid.length} 条：</p>
-              <ul className="mt-1 max-h-40 space-y-1 overflow-auto">
-                {result.invalid.map((inv) => (
-                  <li key={inv.line} className="text-muted">
-                    第 {inv.line} 行：{inv.reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+      {result && <div className="mt-4"><BatchResultBanner result={result} onClose={() => setResult(null)} /></div>}
     </Dialog>
   );
 }

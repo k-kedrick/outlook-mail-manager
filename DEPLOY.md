@@ -63,6 +63,35 @@ ACCESS_MODE=local sh deploy/scripts/install.sh
 
 ## 高级手动部署
 
+## 安全更新、备份与回滚
+
+更新前先备份数据库和环境配置，备份文件不得提交到 Git：
+
+```bash
+cd /opt/outlook-mail-manager
+cp data/dev.db "data/dev.db.before-update-$(date +%F-%H%M%S).bak"
+cp .env ".env.before-update-$(date +%F-%H%M%S).bak"
+git pull --ff-only
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 outlook-mail-manager
+```
+
+`GET /api/health` 会检查应用和 SQLite；数据库不可用时返回 503。若发布失败，先恢复上一提交；只有迁移已经执行且确需回退数据时，才停止容器并恢复数据库备份。
+
+邮件读取除了 HTTPS 443 外，还可能回退到 Outlook IMAP OAuth2。服务器和 Docker 出站网络必须允许连接 `outlook.office365.com:993`；无需向公网开放 993 入站端口。部署后可在容器内检查 DNS/TLS 连通性，但不要输出 Access Token 或开启 IMAP 原始协议日志。
+
+### Cloudflare 与真实访客 IP
+
+在 `/etc/nginx/conf.d/cloudflare-real-ip.conf` 设置 `real_ip_header CF-Connecting-IP`，并从 Cloudflare 官方 `ips-v4`、`ips-v6` 列表生成全部 `set_real_ip_from` 项。站点反代必须使用：
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+```
+
+Cloudflare 对以下路径配置速率限制：登录 5 次/分钟、卡密校验 20 次/分钟、验证码 6 次/分钟、TOTP 10 次/分钟。源站防火墙的 80/443 仅允许 Cloudflare 地址段，22 端口保留管理员 SSH 来源。修改规则前保持一个现有 SSH 会话，并用新会话验证，避免把自己锁在服务器外。
+
 ### Linux / VPS Node 部署
 
 ```bash

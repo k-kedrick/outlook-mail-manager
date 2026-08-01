@@ -13,6 +13,7 @@ export function middleware(request: NextRequest): NextResponse {
     // Public card-key redemption — gated by the card key itself, not admin login.
     pathname === "/redeem" ||
     pathname.startsWith("/api/redeem") ||
+    pathname === "/api/health" ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico";
 
@@ -22,7 +23,11 @@ export function middleware(request: NextRequest): NextResponse {
   if (hasSession) return NextResponse.next();
 
   if (pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: { message: "请先登录。" } }, { status: 401 });
+    const requestId = crypto.randomUUID();
+    return NextResponse.json(
+      { error: { message: "请先登录。", details: { requestId } } },
+      { status: 401, headers: { "Cache-Control": "no-store, max-age=0" } },
+    );
   }
 
   const url = request.nextUrl.clone();

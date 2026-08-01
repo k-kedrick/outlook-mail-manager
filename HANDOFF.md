@@ -71,7 +71,8 @@ src/
   lib/
     outlook/
       oauth.ts       令牌换取 + 轮换 + 5分钟节流护栏（核心，改动前务必先理解）
-      mail.ts        读信：Outlook REST API 优先，Graph 兜底；fetchInboxAndJunk 合并收件箱+垃圾邮件
+      mail.ts        三通道调度：Outlook REST 优先，Graph、IMAP OAuth2 兜底
+      imap.ts        Outlook IMAP 993/TLS/OAuth2、UID 分页、特殊文件夹和正文解析
       health.ts      verifyStatus(只读检测) vs checkAccount(会轮换的保活检测)
       risk.ts        令牌 90 天有效期倒计时 + 三档风险色（剩余天数基于 refreshTokenExpiresAt）
       code-service.ts / codes.ts   验证码抓取（收件箱+垃圾邮件并发取最新）与正则提取
@@ -162,7 +163,7 @@ deploy/nginx/app.example.conf   Nginx 反代模板
 ## 已知遗留问题 / 维护项（新会话别重新"发现"一遍）
 
 0. **验证码正则误抓 `Enter` 已修复**：不要再把它当成未修 bug。后续如再改 `codes.ts`，必须保留 ChatGPT `Enter this temporary verification code to continue: 736276` 返回 `736276` 的样本验证。
-1. `imapflow` / `mailparser` 这两个依赖已经不再被任何代码使用（读信改走 REST API 了），留在 `package.json` 里没删，不影响运行，可以择机 `npm uninstall`。
+1. `imapflow` 已用于第三套 IMAP OAuth2 取件通道，不可移除；正文通过服务器 MIME `BODYSTRUCTURE` 精确下载文本部分，不下载附件。服务器需允许出站访问 `outlook.office365.com:993`。
 2. `.env` 里的密钥/口令是开发期弱值，真要给别人用或长期跑，需要换成强随机值（换 `APP_SECRET` 前一定记得会导致旧密文全部失效，见上方提醒）。
 3. 没有任何自动化测试（没有 `*.test.ts`），所有验证都是本轮对话里手写临时脚本跑出来的（验证完会删掉）。如果后续加测试，优先覆盖验证码提取、导入解析、导出字段、TOTP 生成。
 4. **`prisma/dev.db.bak` 备份文件**：第六/七期迁移前留的 SQLite 备份，占空间但无害；确认新功能都稳了可以删。

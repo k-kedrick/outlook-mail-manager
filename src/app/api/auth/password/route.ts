@@ -1,7 +1,7 @@
 import { fail, ok, routeError } from "@/lib/api";
-import { requireAuth, verifyAdminPassword } from "@/lib/auth";
+import { clearSessionCookie, requireAuth, verifyAdminPassword } from "@/lib/auth";
 import { hashPassword } from "@/lib/secrets";
-import { setAdminPasswordHash } from "@/lib/settings";
+import { changeAdminPassword } from "@/lib/settings";
 import { passwordChangeSchema } from "@/lib/validation";
 
 export const runtime = "nodejs";
@@ -16,8 +16,9 @@ export async function POST(request: Request): Promise<Response> {
     if (!(await verifyAdminPassword(currentPassword))) {
       return fail("当前密码不正确。", 401);
     }
-    await setAdminPasswordHash(hashPassword(newPassword));
-    return ok({ ok: true });
+    await changeAdminPassword(hashPassword(newPassword));
+    await clearSessionCookie();
+    return ok({ ok: true, reauthenticate: true });
   } catch (error) {
     return routeError(error);
   }

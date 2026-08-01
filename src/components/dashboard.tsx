@@ -19,6 +19,7 @@ import {
   Minus,
 } from "lucide-react";
 import { api } from "@/lib/client";
+import type { BatchFeedback } from "@/lib/batch-feedback";
 import { AccountDrawer } from "./account-drawer";
 import { BulkGroupDialog } from "./bulk-group-dialog";
 import { CardKeyDialog } from "./card-key-dialog";
@@ -29,6 +30,7 @@ import { SettingsDialog } from "./settings-dialog";
 import { TotpDialog } from "./totp-dialog";
 import { Pill, RiskBadge, STATUS_OPTIONS, StatusBadge } from "./ui/badge";
 import { Button, IconButton } from "./ui/button";
+import { BatchResultBanner, failedBatchResult, type BatchResult } from "./ui/batch-result";
 import { Card } from "./ui/card";
 import { fieldClass, fieldClassSm } from "./ui/field";
 import type { Account, AccountsResponse, AppConfig, Group } from "./types";
@@ -62,6 +64,7 @@ export function Dashboard(): React.ReactNode {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
 
   const [importOpen, setImportOpen] = useState(false);
   const [groupsOpen, setGroupsOpen] = useState(false);
@@ -175,49 +178,57 @@ export function Dashboard(): React.ReactNode {
     setHeaderSelectionMode(shouldInvertVisible ? "inverted" : "default");
   }
 
-  async function withBusy(key: string, fn: () => Promise<void>): Promise<void> {
+  async function withBusy(
+    key: string,
+    fn: () => Promise<void>,
+    failure?: { title: string; requested: number },
+  ): Promise<void> {
     setBusy(key);
     setMessage(null);
+    setBatchResult(null);
     try {
       await fn();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "操作失败");
+      if (failure) setBatchResult(failedBatchResult(failure.title, failure.requested, e));
+      else setMessage(e instanceof Error ? e.message : "操作失败");
     } finally {
       setBusy(null);
     }
   }
 
+  function showBatchResult(title: string, feedback: BatchFeedback): void {
+    setBatchResult({ ...feedback, title, completedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }) });
+  }
+
   const checkStatus = (all: boolean) =>
     withBusy("status", async () => {
-      const res = await api.post<{ checked: number; summary: Record<string, number> }>(
+      const res = await api.post<{ checked: number; summary: Record<string, number>; feedback: BatchFeedback }>(
         "/api/accounts/check-status",
         all ? {} : { ids: [...selected] },
       );
       await loadAccounts();
-      const parts = Object.entries(res.summary).map(([k, v]) => `${k}:${v}`);
-      setMessage(`检测状态完成 ${res.checked} 个（不轮换令牌）— ${parts.join("，") || "无账号"}`);
-    });
+      showBatchResult("状态检测完成（不轮换令牌）", res.feedback);
+    }, { title: "状态检测失败", requested: all ? (data?.total ?? 0) : selected.size });
 
   const refreshTokens = (all: boolean) =>
     withBusy("refresh", async () => {
-      const res = await api.post<{ checked: number; summary: Record<string, number> }>(
+      const res = await api.post<{ checked: number; refreshed: number; skipped: number; failed: number; feedback: BatchFeedback }>(
         "/api/accounts/keep-alive",
         all ? {} : { ids: [...selected] },
       );
       await loadAccounts();
-      const parts = Object.entries(res.summary).map(([k, v]) => `${k}:${v}`);
-      setMessage(`刷新令牌完成 ${res.checked} 个 — ${parts.join("，") || "无账号"}`);
-    });
+      showBatchResult("令牌保活完成", res.feedback);
+    }, { title: "令牌保活失败", requested: all ? (data?.total ?? 0) : selected.size });
 
   const fetchCodes = (all: boolean) =>
     withBusy("codes", async () => {
-      const res = await api.post<{ fetched: number; withCode: number }>(
+      const res = await api.post<{ fetched: number; withCode: number; feedback: BatchFeedback }>(
         "/api/accounts/fetch-codes",
         all ? {} : { ids: [...selected] },
       );
       await loadAccounts();
-      setMessage(`获取验证码完成：${res.fetched} 个账号，命中 ${res.withCode} 个`);
-    });
+      showBatchResult("验证码获取完成", res.feedback);
+    }, { title: "验证码获取失败", requested: all ? (data?.total ?? 0) : selected.size });
 
   const fetchCodeRow = (id: string) =>
     withBusy(`code-${id}`, async () => {
@@ -229,13 +240,13 @@ export function Dashboard(): React.ReactNode {
     withBusy("delete", async () => {
       if (!selected.size) return;
       if (!confirm(`确认删除选中的 ${selected.size} 个账号？此操作不可撤销。`)) return;
-      const res = await api.post<{ deleted: number }>("/api/accounts/bulk-delete", {
+      const res = await api.post<{ deleted: number; feedback: BatchFeedback }>("/api/accounts/bulk-delete", {
         ids: [...selected],
       });
       setSelected(new Set());
       await loadAccounts();
-      setMessage(`已删除 ${res.deleted} 个账号`);
-    });
+      showBatchResult("批量删除完成", res.feedback);
+    }, { title: "批量删除失败", requested: selected.size });
 
   const assignGroup = (id: string, groupId: string) =>
     withBusy(`grp-${id}`, async () => {
@@ -420,6 +431,7 @@ export function Dashboard(): React.ReactNode {
           {message}
         </div>
       )}
+      {batchResult && <BatchResultBanner result={batchResult} onClose={() => setBatchResult(null)} />}
 
       {/* Table */}
       <Card className="overflow-hidden">

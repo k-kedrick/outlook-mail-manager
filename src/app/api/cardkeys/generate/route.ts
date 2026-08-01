@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
-import { ok, routeError } from "@/lib/api";
+import { logPublicError, ok, requestId, routeError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+import { buildBatchFeedback, missingIdIssues, safeIssueForError, type BatchIssue } from "@/lib/batch-feedback";
 import { prisma } from "@/lib/prisma";
 import { buildCode } from "@/lib/cardkey";
 import { cardKeyGenerateSchema } from "@/lib/validation";
@@ -44,32 +45,60 @@ export async function POST(request: Request): Promise<Response> {
   try {
     await requireAuth();
     const { ids, prefix, regenerate } = cardKeyGenerateSchema.parse(await request.json());
-
-    const existing = await prisma.cardKey.findMany({
-      where: { accountId: { in: ids } },
-      select: { accountId: true },
+    const id = requestId();
+    const accounts = await prisma.mailAccount.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, email: true, cardKey: { select: { id: true } } },
     });
-    const hasKey = new Set(existing.map((k) => k.accountId));
 
     let generated = 0;
     let regenerated = 0;
     let skipped = 0;
+    const issues: BatchIssue[] = missingIdIssues(ids, accounts.map((account) => account.id));
 
-    for (const accountId of ids) {
-      if (hasKey.has(accountId)) {
+    for (const account of accounts) {
+      if (account.cardKey) {
         if (regenerate) {
-          await regenerateWithRetry(accountId, prefix);
-          regenerated += 1;
+          try {
+            await regenerateWithRetry(account.id, prefix);
+            regenerated += 1;
+          } catch (error) {
+            logPublicError("cardkey-generate", id, error, "PROCESSING_ERROR", account.id);
+            issues.push(safeIssueForError(account.id, account.email));
+          }
         } else {
           skipped += 1;
+          issues.push({
+            id: account.id,
+            email: account.email,
+            outcome: "skipped",
+            reasonCode: "CARD_KEY_EXISTS",
+            message: "账号已有卡密，未启用覆盖。",
+          });
         }
       } else {
-        await createWithRetry(accountId, prefix);
-        generated += 1;
+        try {
+          await createWithRetry(account.id, prefix);
+          generated += 1;
+        } catch (error) {
+          logPublicError("cardkey-generate", id, error, "PROCESSING_ERROR", account.id);
+          issues.push(safeIssueForError(account.id, account.email));
+        }
       }
     }
 
-    return ok({ generated, regenerated, skipped, total: ids.length });
+    return ok({
+      generated,
+      regenerated,
+      skipped,
+      total: ids.length,
+      feedback: buildBatchFeedback({
+        requestId: id,
+        requested: ids.length,
+        succeeded: generated + regenerated,
+        issues,
+      }),
+    });
   } catch (error) {
     return routeError(error);
   }

@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { api } from "@/lib/client";
+import type { BatchFeedback } from "@/lib/batch-feedback";
 import { Button } from "./ui/button";
+import { BatchResultBanner, failedBatchResult, type BatchResult } from "./ui/batch-result";
 import { Dialog } from "./ui/dialog";
 import { fieldBase, fieldClassSm } from "./ui/field";
 import type { Group } from "./types";
@@ -15,6 +17,7 @@ type ImportResult = {
   total: number;
   duplicateInInput: number;
   invalid: { line: number; raw: string; reason: string }[];
+  feedback: BatchFeedback;
 };
 
 export function ImportDialog({
@@ -29,23 +32,22 @@ export function ImportDialog({
   const [text, setText] = useState("");
   const [groupId, setGroupId] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<ImportResult | null>(null);
+  const [result, setResult] = useState<BatchResult | null>(null);
 
   const lineCount = useMemo(() => text.split(/\r?\n/).filter((l) => l.trim()).length, [text]);
 
   async function submit(): Promise<void> {
     setLoading(true);
-    setError(null);
+    setResult(null);
     try {
       const res = await api.post<ImportResult>("/api/accounts/import", {
         text,
         groupId: groupId || undefined,
       });
-      setResult(res);
+      setResult({ ...res.feedback, title: "账号导入完成", completedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }) });
       onImported();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "导入失败");
+      setResult(failedBatchResult("账号导入失败", lineCount, e));
     } finally {
       setLoading(false);
     }
@@ -101,35 +103,7 @@ export function ImportDialog({
         </select>
       </div>
 
-      {error && <p className="mt-3 text-sm text-rose-400">{error}</p>}
-
-      {result && (
-        <div className="mt-4 rounded-lg border border-line bg-surface2/60 p-3 text-xs">
-          <p className="text-slate-200">
-            成功导入 <span className="text-emerald-300">{result.created}</span> 个新账号，更新{" "}
-            <span className="text-indigo-300">{result.updated}</span> 个；补充身份验证器{" "}
-            <span className="text-teal">{result.totpUpdated}</span> 个；输入内重复{" "}
-            {result.duplicateInInput} 个。
-          </p>
-          {result.notFound.length > 0 && (
-            <p className="mt-1 text-amber-300">
-              以下 {result.notFound.length} 个邮箱未导入、无法补充 2FA：{result.notFound.join("、")}
-            </p>
-          )}
-          {result.invalid.length > 0 && (
-            <div className="mt-2">
-              <p className="text-rose-400">无效行 {result.invalid.length} 条：</p>
-              <ul className="mt-1 max-h-40 space-y-1 overflow-auto">
-                {result.invalid.map((inv) => (
-                  <li key={inv.line} className="text-muted">
-                    第 {inv.line} 行：{inv.reason}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+      {result && <div className="mt-4"><BatchResultBanner result={result} onClose={() => setResult(null)} /></div>}
     </Dialog>
   );
 }

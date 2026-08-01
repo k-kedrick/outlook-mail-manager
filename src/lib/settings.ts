@@ -14,16 +14,15 @@ export type ConfigInput = {
 
 /** Read the single AppConfig row, seeding it from env defaults on first access. */
 export async function getConfig(): Promise<AppConfig> {
-  const existing = await prisma.appConfig.findUnique({ where: { id: SINGLETON_ID } });
-  if (existing) return existing;
-
   const envHours = Number(process.env.KEEP_ALIVE_INTERVAL_HOURS ?? "168");
   const refreshIntervalDays =
     Number.isFinite(envHours) && envHours > 0 ? Math.max(1, Math.round(envHours / 24)) : 7;
   const refreshEnabled = process.env.KEEP_ALIVE_ENABLED !== "0";
 
-  return prisma.appConfig.create({
-    data: { id: SINGLETON_ID, refreshEnabled, refreshIntervalDays },
+  return prisma.appConfig.upsert({
+    where: { id: SINGLETON_ID },
+    create: { id: SINGLETON_ID, refreshEnabled, refreshIntervalDays },
+    update: {},
   });
 }
 
@@ -40,6 +39,14 @@ export async function setAdminPasswordHash(hash: string | null): Promise<void> {
     where: { id: SINGLETON_ID },
     create: { id: SINGLETON_ID, adminPasswordHash: hash },
     update: { adminPasswordHash: hash },
+  });
+}
+
+export async function changeAdminPassword(hash: string): Promise<void> {
+  await prisma.appConfig.upsert({
+    where: { id: SINGLETON_ID },
+    create: { id: SINGLETON_ID, adminPasswordHash: hash, sessionVersion: 2 },
+    update: { adminPasswordHash: hash, sessionVersion: { increment: 1 } },
   });
 }
 

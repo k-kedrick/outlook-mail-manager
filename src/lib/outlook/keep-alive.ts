@@ -14,6 +14,9 @@ export type KeepAliveOptions = {
 
 export type KeepAliveSummary = {
   checked: number;
+  refreshed: number;
+  skipped: number;
+  failed: number;
   summary: Record<string, number>;
   results: CheckResult[];
 };
@@ -45,9 +48,17 @@ export async function runKeepAlive({
   const accounts = await prisma.mailAccount.findMany({ where });
   const results = await checkAccounts(accounts, concurrency);
   const summary = results.reduce<Record<string, number>>((acc, r) => {
-    acc[r.status] = (acc[r.status] ?? 0) + 1;
+    const key = r.refreshOutcome ?? "FAILED";
+    acc[key] = (acc[key] ?? 0) + 1;
     return acc;
   }, {});
 
-  return { checked: results.length, summary, results };
+  return {
+    checked: results.length,
+    refreshed: summary.REFRESHED ?? 0,
+    skipped: summary.SKIPPED ?? 0,
+    failed: summary.FAILED ?? 0,
+    summary,
+    results,
+  };
 }

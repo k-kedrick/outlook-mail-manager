@@ -1,11 +1,12 @@
 import type { MailAccount } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { imapInbox, imapMessage } from "./imap";
 import { getAccessToken, OAuthError } from "./oauth";
 
 // "outlook" = Outlook REST API over HTTPS (outlook.office.com/api/v2.0), the path
 // that works for these MSA/bulk accounts. "graph" = Microsoft Graph, a fallback
 // for accounts whose app registration consents Graph scopes.
-export type MailSource = "graph" | "outlook";
+export type MailSource = "graph" | "outlook" | "imap";
 export type MailFolder = "inbox" | "junk";
 
 export type MailMessage = {
@@ -87,12 +88,13 @@ async function outlookInbox(
   limit: number,
   withBody: boolean,
   folder: MailFolder,
+  offset: number,
 ): Promise<MailMessage[]> {
   const select = ["Id", "Subject", "From", "ReceivedDateTime", "BodyPreview", "IsRead"];
   if (withBody) select.push("Body");
   const path =
     `/me/MailFolders/${outlookFolder(folder)}/messages` +
-    `?$top=${limit}&$orderby=ReceivedDateTime%20desc&$select=${select.join(",")}`;
+    `?$top=${limit}&$skip=${offset}&$orderby=ReceivedDateTime%20desc&$select=${select.join(",")}`;
   const data = await outlookGet<{ value?: RestMessage[] }>(account, path);
   return (data.value ?? []).map((m) => mapRest(m, withBody));
 }
@@ -155,12 +157,13 @@ async function graphInbox(
   limit: number,
   withBody: boolean,
   folder: MailFolder,
+  offset: number,
 ): Promise<MailMessage[]> {
   const select = ["id", "subject", "from", "receivedDateTime", "bodyPreview", "isRead"];
   if (withBody) select.push("body");
   const path =
     `/me/mailFolders/${graphFolder(folder)}/messages` +
-    `?$top=${limit}&$orderby=receivedDateTime%20desc&$select=${select.join(",")}`;
+    `?$top=${limit}&$skip=${offset}&$orderby=receivedDateTime%20desc&$select=${select.join(",")}`;
   const data = await graphGet<{ value?: GraphMessage[] }>(account, path);
   return (data.value ?? []).map((m) => mapGraph(m, withBody));
 }
@@ -176,22 +179,23 @@ async function graphMessage(account: MailAccount, id: string): Promise<MailMessa
 // Public API — try the account's learned protocol first, then the other
 // ---------------------------------------------------------------------------
 
-function preferError(outlookErr: unknown, graphErr: unknown): Error {
-  if (graphErr === undefined && outlookErr instanceof Error) return outlookErr;
-  if (outlookErr === undefined && graphErr instanceof Error) return graphErr;
-  // A dead refresh token surfaces as OAuthError from both paths — prefer it.
-  if (outlookErr instanceof OAuthError) return outlookErr;
-  if (graphErr instanceof OAuthError) return graphErr;
-  const o = outlookErr instanceof Error ? outlookErr.message : String(outlookErr);
-  const g = graphErr instanceof Error ? graphErr.message : String(graphErr);
-  return new Error(`读取失败。Outlook: ${o} | Graph: ${g}`);
+export class MailReadError extends Error {
+  readonly attempts: Array<{ source: MailSource; category: string }>;
+
+  constructor(errors: Partial<Record<MailSource, unknown>>) {
+    super("暂时无法读取邮件，请稍后重试。");
+    this.name = "MailReadError";
+    this.attempts = Object.entries(errors).map(([source, error]) => ({
+      source: source as MailSource,
+      category: error instanceof Error ? error.name : typeof error,
+    }));
+  }
 }
 
-function protocolOrder(account: MailAccount): MailSource[] {
-  // Outlook REST is what works for these accounts; try it first unless the
-  // account is known to use Graph.
-  if (account.mailProtocol === "graph") return ["graph", "outlook"];
-  return ["outlook", "graph"];
+export function protocolOrder(account: Pick<MailAccount, "mailProtocol">): MailSource[] {
+  if (account.mailProtocol === "graph") return ["graph", "outlook", "imap"];
+  if (account.mailProtocol === "imap") return ["imap", "outlook", "graph"];
+  return ["outlook", "graph", "imap"];
 }
 
 async function persistProtocol(account: MailAccount, proto: MailSource): Promise<void> {
@@ -208,34 +212,49 @@ export async function fetchInbox(
     limit = 20,
     withBody = false,
     folder = "inbox",
-  }: { limit?: number; withBody?: boolean; folder?: MailFolder } = {},
+    offset = 0,
+  }: { limit?: number; withBody?: boolean; folder?: MailFolder; offset?: number } = {},
 ): Promise<InboxResult> {
   const errors: Partial<Record<MailSource, unknown>> = {};
   for (const proto of protocolOrder(account)) {
     try {
       const messages =
         proto === "outlook"
-          ? await outlookInbox(account, limit, withBody, folder)
-          : await graphInbox(account, limit, withBody, folder);
+          ? await outlookInbox(account, limit, withBody, folder, offset)
+          : proto === "graph"
+            ? await graphInbox(account, limit, withBody, folder, offset)
+            : await imapInbox(account, { limit, withBody, folder, offset });
       await persistProtocol(account, proto);
       return { source: proto, messages };
     } catch (err) {
+      if (err instanceof OAuthError && err.code === "invalid_grant") throw err;
       errors[proto] = err;
     }
   }
-  throw preferError(errors.outlook, errors.graph);
+  throw new MailReadError(errors);
 }
 
 export type FolderedMailMessage = MailMessage & { folder: MailFolder };
+export type FolderPage = { loaded: number; nextOffset: number; hasMore: boolean };
 
 /** Fetch Inbox and Junk concurrently and merge into one time-sorted list. Junk failures degrade silently. */
 export async function fetchInboxAndJunk(
   account: MailAccount,
-  { limit = 20, withBody = false }: { limit?: number; withBody?: boolean } = {},
-): Promise<{ source: MailSource; messages: FolderedMailMessage[]; junkError: string | null }> {
+  {
+    limit = 20,
+    withBody = false,
+    inboxOffset = 0,
+    junkOffset = 0,
+  }: { limit?: number; withBody?: boolean; inboxOffset?: number; junkOffset?: number } = {},
+): Promise<{
+  source: MailSource;
+  messages: FolderedMailMessage[];
+  junkError: string | null;
+  folders: { inbox: FolderPage; junk: FolderPage };
+}> {
   const [inboxRes, junkRes] = await Promise.allSettled([
-    fetchInbox(account, { limit, withBody, folder: "inbox" }),
-    fetchInbox(account, { limit, withBody, folder: "junk" }),
+    fetchInbox(account, { limit, withBody, folder: "inbox", offset: inboxOffset }),
+    fetchInbox(account, { limit, withBody, folder: "junk", offset: junkOffset }),
   ]);
 
   if (inboxRes.status === "rejected") throw inboxRes.reason;
@@ -246,13 +265,29 @@ export async function fetchInboxAndJunk(
   if (junkRes.status === "fulfilled") {
     junkMessages = junkRes.value.messages.map((m) => ({ ...m, folder: "junk" }));
   } else {
-    junkError = junkRes.reason instanceof Error ? junkRes.reason.message : String(junkRes.reason);
+    junkError = "垃圾邮件文件夹暂时不可用。";
   }
 
   const merged = [...inboxMessages, ...junkMessages].sort(
     (a, b) => new Date(b.receivedAt ?? 0).getTime() - new Date(a.receivedAt ?? 0).getTime(),
   );
-  return { source: inboxRes.value.source, messages: merged, junkError };
+  return {
+    source: inboxRes.value.source,
+    messages: merged,
+    junkError,
+    folders: {
+      inbox: {
+        loaded: inboxMessages.length,
+        nextOffset: inboxOffset + inboxMessages.length,
+        hasMore: inboxMessages.length === limit,
+      },
+      junk: {
+        loaded: junkMessages.length,
+        nextOffset: junkOffset + junkMessages.length,
+        hasMore: !junkError && junkMessages.length === limit,
+      },
+    },
+  };
 }
 
 export async function fetchMessage(
@@ -263,6 +298,7 @@ export async function fetchMessage(
   const proto = source ?? (account.mailProtocol as MailSource | null) ?? null;
   if (proto === "graph") return graphMessage(account, id);
   if (proto === "outlook") return outlookMessage(account, id);
+  if (proto === "imap") return imapMessage(account, id);
   // Unknown hint: Graph ids contain '=' / '-' and are long; default to Outlook.
   return outlookMessage(account, id);
 }
