@@ -1,242 +1,111 @@
-# 部署说明
+# Outlook Mail Manager V2 部署
 
-本项目是 Next.js + Prisma + SQLite 的服务端应用，包含 API Routes、SQLite 数据库、后台定时器和公开兑换页。GitHub 适合存放源码；完整功能需要部署到支持 Node.js 的服务器。
+## 1. 前置条件
 
-## 不适合的部署方式
+- Ubuntu 24.04、Docker、Docker Compose、Nginx、HTTPS。
+- `/opt/outlook-mail-manager` 独占一个 PostgreSQL 数据卷，不复用其他项目数据库。
+- DNS/Cloudflare 已把 `outlook.2963wang.shop` 指向服务器。
+- Microsoft 应用允许个人账号与组织账号，回调地址为 `https://outlook.2963wang.shop/api/v2/oauth/microsoft/callback`。
+- 应用证书已上传 Microsoft，PEM 私钥与证书只读放在 `secrets/`。
 
-- **GitHub Pages**：只能托管静态文件，不能运行 Next API、Prisma、SQLite 或后台定时任务。
-- **当前架构直接上 Vercel**：SQLite 不适合 serverless 文件系统持久写入；如需 Vercel，建议先迁移到 PostgreSQL/MySQL 等外部数据库。
-
-## Docker 一键部署（空库优先，推荐）
-
-默认按空数据库部署，不迁移任何旧账号数据。安装脚本会生成 `.env`、生成实际 `docker-compose.yml`、创建 `data/`、启动容器并等待健康检查。
-
-```bash
-cd /opt
-git clone https://github.com/k-kedrick/outlook-mail-manager.git
-cd outlook-mail-manager
-sh deploy/scripts/install.sh
-```
-
-脚本会让你选择访问方式：
-
-- `reverse-proxy`：推荐，绑定 `127.0.0.1:3005`，再用 Nginx/Caddy/面板反代并开启 HTTPS。
-- `direct-ip`：绑定 `0.0.0.0:3005`，可直接访问 `http://服务器IP:3005`。
-- `local`：绑定 `127.0.0.1:3005`，只适合本机测试。
-
-脚本会自动生成 `APP_SECRET`；你只需要按提示选择访问方式/公网地址，并输入后台密码。脚本不会把密钥或密码打印出来。
-
-### 反代 + HTTPS 示例
-
-你的服务器如果使用 `outlook.2963wang.shop`：
+## 2. 首次安装
 
 ```bash
 cd /opt
 git clone https://github.com/k-kedrick/outlook-mail-manager.git
 cd outlook-mail-manager
-APP_DOMAIN=outlook.2963wang.shop INSTALL_NGINX=1 sh deploy/scripts/install.sh
+cp docker-compose.example.yml docker-compose.yml
+cp .env.example .env
+mkdir -p secrets backups
+chmod 700 secrets backups
 ```
 
-脚本会写 Nginx 配置、执行 `nginx -t` 并 reload。HTTPS 仍建议手动执行：
+编辑 `.env`：设置独立 `POSTGRES_PASSWORD`、匹配的 `DATABASE_URL`、公网 `NEXT_PUBLIC_APP_URL`、Microsoft Client ID 和证书 thumbprint。生产应用密钥写入只读文件：
 
 ```bash
-certbot --nginx -d outlook.2963wang.shop
+openssl rand -hex 32 > secrets/session_signing_key
+printf 'v1:' > secrets/data_encryption_keys && openssl rand -hex 32 >> secrets/data_encryption_keys
+openssl rand -hex 32 > secrets/card_key_hmac_key
+openssl rand -hex 24 > secrets/admin_bootstrap_password
+openssl rand -hex 32 > secrets/metrics_bearer_token
+chmod 600 secrets/*
 ```
 
-### IP 直连示例
-
-不用反代时选择 `direct-ip`，或直接指定：
+将证书放为 `secrets/microsoft_certificate` 和 `secrets/microsoft_private_key`。随后：
 
 ```bash
-ACCESS_MODE=direct-ip sh deploy/scripts/install.sh
-```
-
-这种方式会开放 `0.0.0.0:3005`。正式环境建议只用于临时测试，长期使用优先 HTTPS 反代。
-
-### 本地测试示例
-
-```bash
-ACCESS_MODE=local sh deploy/scripts/install.sh
-```
-
-访问 `http://localhost:3005`。
-
-## 高级手动部署
-
-## 安全更新、备份与回滚
-
-更新前先备份数据库和环境配置，备份文件不得提交到 Git：
-
-```bash
-cd /opt/outlook-mail-manager
-cp data/dev.db "data/dev.db.before-update-$(date +%F-%H%M%S).bak"
-cp .env ".env.before-update-$(date +%F-%H%M%S).bak"
-git pull --ff-only
-docker compose up -d --build
+docker compose build --no-cache
+docker compose up -d postgres
+docker compose run --rm migration
+docker compose up -d web worker
 docker compose ps
-docker compose logs --tail=100 outlook-mail-manager
+curl -fsS http://127.0.0.1:3005/api/health/live
+curl -fsS http://127.0.0.1:3005/api/health/ready
 ```
 
-`GET /api/health` 会检查应用和 SQLite；数据库不可用时返回 503。若发布失败，先恢复上一提交；只有迁移已经执行且确需回退数据时，才停止容器并恢复数据库备份。
+`migration` 成功后才允许启动新 Web/Worker；它们自身不会执行迁移。首次打开后台完成强密码、TOTP 和恢复码绑定。
 
-邮件读取除了 HTTPS 443 外，还可能回退到 Outlook IMAP OAuth2。服务器和 Docker 出站网络必须允许连接 `outlook.office365.com:993`；无需向公网开放 993 入站端口。部署后可在容器内检查 DNS/TLS 连通性，但不要输出 Access Token 或开启 IMAP 原始协议日志。
+## 3. Nginx 与 Cloudflare
 
-### Cloudflare 与真实访客 IP
-
-在 `/etc/nginx/conf.d/cloudflare-real-ip.conf` 设置 `real_ip_header CF-Connecting-IP`，并从 Cloudflare 官方 `ips-v4`、`ips-v6` 列表生成全部 `set_real_ip_from` 项。站点反代必须使用：
+复制 `deploy/nginx/app.example.conf`，将域名替换为 `outlook.2963wang.shop`。Cloudflare real-IP 配置必须只信任 Cloudflare 官方网段；站点反代覆盖：
 
 ```nginx
+proxy_set_header Host $host;
 proxy_set_header X-Real-IP $remote_addr;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
 ```
 
-Cloudflare 对以下路径配置速率限制：登录 5 次/分钟、卡密校验 20 次/分钟、验证码 6 次/分钟、TOTP 10 次/分钟。源站防火墙的 80/443 仅允许 Cloudflare 地址段，22 端口保留管理员 SSH 来源。修改规则前保持一个现有 SSH 会话，并用新会话验证，避免把自己锁在服务器外。
+Cloudflare 建议规则：登录 5 次/分钟、卡密校验 20 次/分钟、验证码任务 6 次/分钟、TOTP 10 次/分钟。应用还有 PostgreSQL 限流桶作为第二层。源站 80/443 仅允许 Cloudflare 网段，22 仅保留管理来源；修改防火墙时保持现有 SSH 会话，并用第二个会话验证。
 
-### Linux / VPS Node 部署
+## 4. OAuth 验收
+
+先用一个 Outlook.com 个人账号完成 Graph 授权，再对同一账号完成 IMAP 授权；再用一个 Microsoft 365 账号重复。确认：
+
+- Graph/IMAP 是两个独立 Grant 和 Access Token Profile。
+- 收件箱与垃圾邮件分别分页，正文可读且不下载附件。
+- M365 租户禁用 IMAP 时记录为能力不可用，Graph 仍正常。
+- legacy REST 只对已导入且探测成功的旧 Grant 出现。
+
+## 5. 更新、备份与回滚
+
+发布前：
 
 ```bash
-git clone <your-repo-url> outlook
-cd outlook
-npm ci
-cp .env.example .env
-```
-
-编辑 `.env`：
-
-```env
-DATABASE_URL="file:./dev.db"
-APP_SECRET="replace-with-a-long-random-secret"
-ADMIN_PASSWORD="change-me"
-```
-
-初始化数据库并构建：
-
-```bash
-npx prisma migrate deploy
-npx prisma generate
-npm run build
-npm start
-```
-
-默认监听 `http://localhost:3005`。生产环境建议使用 Nginx、Caddy 或面板反代到 `localhost:3005`，并开启 HTTPS。
-
-### Windows 服务器部署
-
-```bat
-git clone <your-repo-url> outlook
-cd outlook
-npm ci
-copy .env.example .env
-npx prisma migrate deploy
-npx prisma generate
-npm run build
-npm start
-```
-
-长期运行可以使用 PM2、NSSM、Windows 服务或任务计划守护 `npm start`。
-
-独立低频保活任务可使用：
-
-```bat
-scripts\keep-alive.bat
-```
-
-### Docker 手动流程
-
-如果不想用一键脚本，可以手动生成配置：
-
-```bash
-cp docker-compose.example.yml docker-compose.yml
-sh deploy/scripts/setup-env.sh
-docker compose up -d --build
-bash deploy/scripts/check-deploy.sh
-```
-
-第一次构建会比较慢，`Building 13/19`、`exporting layers`、`docker:default` 都是正常进度，不是错误；看到 `Container outlook-mail-manager Started` 才算启动完成。
-
-```bash
-docker compose up -d --build
+cd /opt/outlook-mail-manager
+cp .env "backups/env-$(date +%F-%H%M%S).bak"
+sh deploy/scripts/backup-postgres.sh
+git pull --ff-only
+docker compose build --no-cache
+docker compose run --rm migration
+docker compose up -d web worker
 docker compose ps
-docker logs outlook-mail-manager --tail=100
+docker compose logs --tail=200 web worker
 ```
 
-如果误按 `Ctrl+C` 中断构建，后面可能没有容器，`docker compose ps` 会是空的；重新执行 `docker compose up -d --build` 并等待完成即可。
+观察 readiness、队列、数据库连接和 JSON 日志至少 30 分钟。每日 `pg_dump` 保留 7 日备、4 周备、6 月备；把备份复制到另一台主机或对象存储。
 
-需要排查的典型字样是：`ERROR`、`failed`、`CANCELED`、`Restarting`。其中 `Restarting` 通常需要看日志：
+代码回滚：切回上一个已验证提交并重新构建。数据库只有在迁移确实写入且旧代码不兼容时才恢复：
 
 ```bash
-docker logs outlook-mail-manager --tail=100
+docker compose stop web worker
+docker compose exec -T postgres dropdb -U outlook outlook_manager
+docker compose exec -T postgres createdb -U outlook outlook_manager
+docker compose exec -T postgres pg_restore -U outlook -d outlook_manager --clean --if-exists < backups/<backup>.dump
+docker compose up -d web worker
 ```
 
-本机测试：
+不要在未确认目标数据库和备份完整性时执行恢复。
+
+## 6. 运维
 
 ```bash
-curl -I http://127.0.0.1:3005/login
-curl -I http://127.0.0.1:3005/redeem
+docker compose ps
+docker compose logs --since=15m web worker
+curl -fsS https://outlook.2963wang.shop/api/health/ready
+docker compose exec postgres pg_isready -U outlook -d outlook_manager
 ```
 
-也可以使用内置检查脚本。脚本不会打印 `.env` 中的密钥值，只检查是否仍是默认值：
+Prometheus 指标只通过内网/Nginx allowlist 访问 `/internal/metrics`，并携带 Bearer Token。日志轮转为 10 MB × 5。Worker 心跳超过 45 秒时 readiness 返回 503。
 
-```bash
-bash deploy/scripts/check-deploy.sh
-```
-
-Nginx 反代示例已放在 `deploy/nginx/app.example.conf`，可复制到 `/etc/nginx/sites-available/<your-domain>`，并把 `server_name` 改成你的域名：
-
-```nginx
-server {
-    server_name mail.example.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:3005;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-}
-```
-
-首次部署后再用 Certbot 或面板为你的域名申请 Let's Encrypt 证书。
-
-## 删除并重新空库部署
-
-以下命令会删除 Outlook 项目容器、镜像、项目目录和 `data/` 数据库：
-
-```bash
-cd /opt/outlook-mail-manager 2>/dev/null && docker compose down --remove-orphans || true
-docker rm -f outlook-mail-manager 2>/dev/null || true
-docker rmi outlook-mail-manager-outlook-mail-manager 2>/dev/null || true
-rm -rf /opt/outlook-mail-manager
-```
-
-## 更新
-
-```bash
-cd /opt/outlook-mail-manager
-git pull
-docker compose up -d --build
-```
-
-## 数据备份
-
-```bash
-cd /opt/outlook-mail-manager
-bash deploy/scripts/backup-sqlite.sh
-```
-
-## `.env` 安全提醒
-
-- 不要把 `.env`、`APP_SECRET`、`ADMIN_PASSWORD`、RefreshToken、2FA 密钥、卡密或真实账号截图贴到公开聊天、GitHub issue 或 README。
-- 空库部署时，如果 `APP_SECRET` 或后台密码泄露，可以直接重新生成并修改 `.env`，然后 `docker compose restart`。
-- 已经导入真实账号后，不要随便改 `APP_SECRET`；它用于解密密码、RefreshToken 和 2FA 密钥，改掉会让已有密文不可读。
-- 如果只是后台密码泄露，可以只改 `ADMIN_PASSWORD`，或登录后台后在设置中修改管理员密码。
-
-## 迁移和数据
-
-- 公开仓库不包含真实 `prisma/dev.db`。
-- Docker 空库部署会在容器启动时自动执行 `npx prisma migrate deploy` 创建结构。
-- 已有真实数据库迁移到服务器时，手动安全传输 `prisma/dev.db`，不要通过 GitHub 上传。
+如需链路追踪，在 `.env` 设置 `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318`。Web 与 Worker 会通过 OTLP/HTTP 的 `/v1/traces` 导出；不配置时不会连接任何第三方监控。
