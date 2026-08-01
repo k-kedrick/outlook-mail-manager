@@ -13,6 +13,7 @@ export function middleware(request: NextRequest): NextResponse {
     // Public card-key redemption — gated by the card key itself, not admin login.
     pathname === "/redeem" ||
     pathname.startsWith("/api/redeem") ||
+    pathname === "/api/health" ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico";
 
