@@ -1,5 +1,6 @@
 import type { MailAccount } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { probeImap } from "./imap";
 import { getAccessToken, isThrottleError, jitter, statusFromError } from "./oauth";
 
 export type CheckResult = {
@@ -28,6 +29,14 @@ const GRAPH_PROBE = "https://graph.microsoft.com/v1.0/me";
 export async function verifyStatus(account: MailAccount): Promise<CheckResult> {
   const useGraph = account.mailProtocol === "graph";
   try {
+    if (account.mailProtocol === "imap") {
+      await probeImap(account);
+      await prisma.mailAccount.update({
+        where: { id: account.id },
+        data: { status: "OK", lastError: null, lastCheckedAt: new Date() },
+      });
+      return { id: account.id, email: account.email, status: "OK", error: null };
+    }
     // NO forceRefresh — reuse cached access token; no rotation on the happy path.
     const token = await getAccessToken(account, useGraph ? "graph" : "imap");
     const res = await fetch(useGraph ? GRAPH_PROBE : OUTLOOK_PROBE, {
@@ -108,12 +117,12 @@ export async function verifyStatuses(
 export async function checkAccount(account: MailAccount): Promise<CheckResult> {
   let status: CheckResult["status"] = "OK";
   let error: string | null = null;
-  let learned: "graph" | "outlook" | null = null;
+  let learned: "graph" | "outlook" | "imap" | null = null;
 
   const kind = account.mailProtocol === "graph" ? "graph" : "imap";
   try {
     await getAccessToken(account, kind, { forceRefresh: true });
-    learned = kind === "graph" ? "graph" : "outlook";
+    learned = kind === "graph" ? "graph" : account.mailProtocol === "imap" ? "imap" : "outlook";
   } catch (refreshError) {
     if (isThrottleError(refreshError)) {
       return {

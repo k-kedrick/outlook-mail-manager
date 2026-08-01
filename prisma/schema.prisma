@@ -20,7 +20,7 @@ model MailAccount {
   groupId            String?
 
   // Which mail protocol actually works for this account, learned on first success.
-  // "graph" | "imap" | null (unknown → try graph then imap).
+  // "outlook" | "graph" | "imap" | null (unknown → Outlook REST, Graph, then IMAP).
   mailProtocol       String?
 
   // Refresh-token keep-alive tracking. The MSA refresh token slides forward on

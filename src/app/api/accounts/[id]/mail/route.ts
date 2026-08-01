@@ -1,4 +1,4 @@
-import { fail, ok, routeError } from "@/lib/api";
+import { fail, logPublicError, ok, requestId, routeError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { fetchInboxAndJunk } from "@/lib/outlook/mail";
@@ -35,13 +35,19 @@ export async function GET(request: Request, { params }: Ctx): Promise<Response> 
       });
       return ok(result);
     } catch (mailError) {
+      const reqId = requestId();
       const status = statusFromError(mailError);
-      const message = mailError instanceof Error ? mailError.message : String(mailError);
+      const category = mailError instanceof Error ? mailError.name : typeof mailError;
+      logPublicError("mail-list", reqId, mailError, category, account.id);
       await prisma.mailAccount.update({
-        where: { id },
-        data: { status, lastError: message, lastCheckedAt: new Date() },
+        where: { id: account.id },
+        data: { status, lastError: category, lastCheckedAt: new Date() },
       });
-      return fail(message, 502);
+      return fail(
+        status === "AUTH_FAILED" ? "邮箱登录凭据已失效。" : "暂时无法读取邮件，请稍后重试。",
+        502,
+        { requestId: reqId },
+      );
     }
   } catch (error) {
     return routeError(error);

@@ -10,7 +10,7 @@ import type { Account, MailMessage } from "./types";
 type Reveal = { email: string; password: string; clientId: string; refreshToken: string };
 type FolderPage = { loaded: number; nextOffset: number; hasMore: boolean };
 type Inbox = {
-  source: "graph" | "outlook";
+  source: "graph" | "outlook" | "imap";
   messages: MailMessage[];
   junkError: string | null;
   folders: { inbox: FolderPage; junk: FolderPage };

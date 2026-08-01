@@ -79,6 +79,8 @@ docker compose logs --tail=100 outlook-mail-manager
 
 `GET /api/health` 会检查应用和 SQLite；数据库不可用时返回 503。若发布失败，先恢复上一提交；只有迁移已经执行且确需回退数据时，才停止容器并恢复数据库备份。
 
+邮件读取除了 HTTPS 443 外，还可能回退到 Outlook IMAP OAuth2。服务器和 Docker 出站网络必须允许连接 `outlook.office365.com:993`；无需向公网开放 993 入站端口。部署后可在容器内检查 DNS/TLS 连通性，但不要输出 Access Token 或开启 IMAP 原始协议日志。
+
 ### Cloudflare 与真实访客 IP
 
 在 `/etc/nginx/conf.d/cloudflare-real-ip.conf` 设置 `real_ip_header CF-Connecting-IP`，并从 Cloudflare 官方 `ips-v4`、`ips-v6` 列表生成全部 `set_real_ip_from` 项。站点反代必须使用：

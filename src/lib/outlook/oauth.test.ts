@@ -1,10 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { update } = vi.hoisted(() => ({ update: vi.fn(async (_args: { data: Record<string, unknown> }) => ({})) }));
-vi.mock("@/lib/prisma", () => ({ prisma: { mailAccount: { update } } }));
+const { update, findUnique } = vi.hoisted(() => ({
+  update: vi.fn(async (_args: { data: Record<string, unknown> }) => ({})),
+  findUnique: vi.fn(async () => ({
+    refreshTokenCipher: "encrypted",
+    graphTokenCipher: null,
+    graphTokenExpiresAt: null,
+    imapTokenCipher: null,
+    imapTokenExpiresAt: null,
+  })),
+}));
+vi.mock("@/lib/prisma", () => ({ prisma: { mailAccount: { update, findUnique } } }));
 vi.mock("@/lib/secrets", () => ({ decryptSecret: vi.fn(() => "refresh-token"), encryptSecret: vi.fn((v: string) => `enc:${v}`) }));
 
-import { getAccessToken, resetOAuthStateForTests } from "./oauth";
+import { getAccessToken, resetOAuthStateForTests, statusFromError } from "./oauth";
 
 function account(id: string, cached = false) {
   return {
@@ -43,6 +52,26 @@ describe("token refresh concurrency", () => {
     expect(b).toBe("access-token");
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  it("serializes different token audiences instead of sharing the wrong access token", async () => {
+    vi.mocked(fetch).mockImplementation(async (_url, init) => {
+      const scope = String(init?.body);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return new Response(JSON.stringify({ access_token: scope.includes("graph.microsoft.com") ? "graph-token" : "imap-token", expires_in: 3600 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const target = account("different-audiences");
+    const [graph, imap] = await Promise.all([
+      getAccessToken(target, "graph"),
+      getAccessToken(target, "imap"),
+    ]);
+    expect(graph).toBe("graph-token");
+    expect(imap).toBe("imap-token");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(findUnique).toHaveBeenCalledOnce();
   });
 
   it("ignores a valid access-token cache for an explicit keep-alive", async () => {
@@ -97,5 +126,9 @@ describe("token refresh concurrency", () => {
     const expiry = update.mock.calls[0]?.[0].data.refreshTokenExpiresAt as Date;
     expect(expiry.getTime()).toBeGreaterThanOrEqual(before + 7_200_000);
     expect(expiry.getTime()).toBeLessThanOrEqual(Date.now() + 7_200_000);
+  });
+
+  it("classifies an IMAP authentication rejection without declaring the refresh token dead", () => {
+    expect(statusFromError({ authenticationFailed: true })).toBe("LOCKED");
   });
 });
