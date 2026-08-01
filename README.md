@@ -1,5 +1,7 @@
 # Outlook 邮箱管理系统
 
+架构边界和关键安全不变量见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
 批量管理 Outlook / MSA 账号，在线读取收件箱、自动提取验证码、检测账号状态，并低频刷新令牌防止失效。
 
 账号格式（每行一个）：
@@ -50,6 +52,14 @@ npm run dev                 # 启动，访问 http://localhost:3005
 | `DATABASE_URL` | SQLite 路径，默认 `file:./dev.db` |
 | `APP_SECRET` | 加密密钥。**修改后已存储的密文将无法解密** |
 | `ADMIN_PASSWORD` | 管理后台登录口令；如果已在设置中改过密码，则优先使用数据库里的哈希 |
+
+生产环境会拒绝缺失、少于 32 字符或使用公开默认值的 `APP_SECRET`，也会拒绝 `ADMIN_PASSWORD=change-me`。修改后台密码后，所有浏览器的旧登录状态会立即失效。
+
+## 健康检查与安全接口
+
+- `GET /api/health` 同时检查应用与 SQLite，适用于 Docker/Nginx 监控。
+- 登录、公开卡密、验证码和 TOTP 接口包含应用侧限流；公网仍建议叠加 Cloudflare 限流。
+- API 响应默认禁止缓存，公开接口不会返回 Outlook、Graph 或数据库原始错误。
 
 ## 功能
 
