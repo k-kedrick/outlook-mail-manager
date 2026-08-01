@@ -8,6 +8,7 @@ export type CheckResult = {
   status: "OK" | "AUTH_FAILED" | "LOCKED" | "ERROR";
   error: string | null;
   skipped?: boolean;
+  refreshOutcome?: "REFRESHED" | "SKIPPED" | "FAILED";
 };
 
 function currentStatus(account: MailAccount): CheckResult["status"] {
@@ -109,28 +110,23 @@ export async function checkAccount(account: MailAccount): Promise<CheckResult> {
   let error: string | null = null;
   let learned: "graph" | "outlook" | null = null;
 
+  const kind = account.mailProtocol === "graph" ? "graph" : "imap";
   try {
-    await getAccessToken(account, "graph", { forceRefresh: true });
-    learned = "graph";
-  } catch (graphError) {
-    try {
-      await getAccessToken(account, "imap", { forceRefresh: true });
-      learned = "outlook";
-    } catch (imapError) {
-      // Rate-limited (rotated too recently) — skip without changing status.
-      if (isThrottleError(imapError) || isThrottleError(graphError)) {
-        return {
-          id: account.id,
-          email: account.email,
-          status: currentStatus(account),
-          error: account.lastError,
-          skipped: true,
-        };
-      }
-      status = statusFromError(imapError);
-      error = imapError instanceof Error ? imapError.message : String(imapError);
+    await getAccessToken(account, kind, { forceRefresh: true });
+    learned = kind === "graph" ? "graph" : "outlook";
+  } catch (refreshError) {
+    if (isThrottleError(refreshError)) {
+      return {
+        id: account.id,
+        email: account.email,
+        status: currentStatus(account),
+        error: account.lastError,
+        skipped: true,
+        refreshOutcome: "SKIPPED",
+      };
     }
-    void graphError;
+    status = statusFromError(refreshError);
+    error = refreshError instanceof Error ? refreshError.message : String(refreshError);
   }
 
   await prisma.mailAccount.update({
@@ -142,7 +138,13 @@ export async function checkAccount(account: MailAccount): Promise<CheckResult> {
       ...(learned ? { mailProtocol: learned } : {}),
     },
   });
-  return { id: account.id, email: account.email, status, error };
+  return {
+    id: account.id,
+    email: account.email,
+    status,
+    error,
+    refreshOutcome: learned ? "REFRESHED" : "FAILED",
+  };
 }
 
 /** Run keep-alive checks with bounded concurrency + jitter. */
@@ -165,6 +167,7 @@ export async function checkAccounts(
           email: accounts[index].email,
           status: "ERROR",
           error: error instanceof Error ? error.message : String(error),
+          refreshOutcome: "FAILED",
         };
       }
     }

@@ -200,13 +200,14 @@ export function Dashboard(): React.ReactNode {
 
   const refreshTokens = (all: boolean) =>
     withBusy("refresh", async () => {
-      const res = await api.post<{ checked: number; summary: Record<string, number> }>(
+      const res = await api.post<{ checked: number; refreshed: number; skipped: number; failed: number }>(
         "/api/accounts/keep-alive",
         all ? {} : { ids: [...selected] },
       );
       await loadAccounts();
-      const parts = Object.entries(res.summary).map(([k, v]) => `${k}:${v}`);
-      setMessage(`刷新令牌完成 ${res.checked} 个 — ${parts.join("，") || "无账号"}`);
+      setMessage(
+        `令牌保活处理 ${res.checked} 个：实际刷新 ${res.refreshed}，暂时跳过 ${res.skipped}，失败 ${res.failed}`,
+      );
     });
 
   const fetchCodes = (all: boolean) =>

@@ -26,7 +26,8 @@ export const DEFAULT_REFRESH_TOKEN_TTL_DAYS = 90;
 // misconfiguration causing excessive refresh-token rotations (a ban risk).
 export const MIN_ROTATION_INTERVAL_MS = 5 * 60_000;
 const lastRefreshAttempt = new Map<string, number>();
-const refreshInFlight = new Map<string, Promise<string>>();
+type InFlightRefresh = { forceRefresh: boolean; promise: Promise<string> };
+const refreshInFlight = new Map<string, InFlightRefresh>();
 
 /** True when a refresh was skipped by the rate-limit backstop (not a real failure). */
 export function isThrottleError(error: unknown): boolean {
@@ -140,13 +141,16 @@ async function getAccessTokenInternal(
   }
 
   // Rate-limit backstop: if we hit the token endpoint for this account very
-  // recently, don't do it again — reuse any cached token, else signal "throttled"
-  // so callers can keep the last-known status instead of forcing a rotation.
+  // recently, don't do it again. A normal read may reuse a cached token, but an
+  // explicit keep-alive must report "throttled" rather than pretend the cached
+  // access token was a successful refresh-token rotation.
   const nowMs = Date.now();
   const lastAttempt = lastRefreshAttempt.get(account.id) ?? 0;
   if (nowMs - lastAttempt < MIN_ROTATION_INTERVAL_MS) {
-    const cached = cachedToken(account, kind);
-    if (cached) return cached;
+    if (!forceRefresh) {
+      const cached = cachedToken(account, kind);
+      if (cached) return cached;
+    }
     throw new OAuthError("throttled", "刷新过于频繁，已跳过（请稍后再试）", 429);
   }
   lastRefreshAttempt.set(account.id, nowMs);
@@ -227,11 +231,22 @@ export async function getAccessToken(
   }
 
   const existing = refreshInFlight.get(account.id);
-  if (existing) return existing;
+  if (existing) {
+    // A force refresh can share only another genuine force refresh. Sharing a
+    // normal cache fill would incorrectly report a keep-alive rotation.
+    if (!options.forceRefresh || existing.forceRefresh) return existing.promise;
+    await existing.promise.catch(() => undefined);
+    return getAccessToken(account, kind, options);
+  }
 
   const pending = getAccessTokenInternal(account, kind, options).finally(() => {
-    if (refreshInFlight.get(account.id) === pending) refreshInFlight.delete(account.id);
+    if (refreshInFlight.get(account.id)?.promise === pending) refreshInFlight.delete(account.id);
   });
-  refreshInFlight.set(account.id, pending);
+  refreshInFlight.set(account.id, { forceRefresh: Boolean(options.forceRefresh), promise: pending });
   return pending;
+}
+
+export function resetOAuthStateForTests(): void {
+  lastRefreshAttempt.clear();
+  refreshInFlight.clear();
 }

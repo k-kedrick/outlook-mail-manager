@@ -39,7 +39,11 @@ export function startKeepAliveScheduler(): void {
         g.__lastTokenSweep = Date.now();
         try {
           const res = await runKeepAlive({ staleBeforeDays: cfg.refreshIntervalDays });
-          if (res.checked > 0) console.log(`[scheduler] keep-alive checked=${res.checked}`, res.summary);
+          if (res.checked > 0) {
+            console.log(
+              `[scheduler] keep-alive checked=${res.checked} refreshed=${res.refreshed} skipped=${res.skipped} failed=${res.failed}`,
+            );
+          }
         } finally {
           g.__keepAliveRunning = false;
         }
