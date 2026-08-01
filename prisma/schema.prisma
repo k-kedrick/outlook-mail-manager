@@ -93,5 +93,6 @@ model AppConfig {
   // Admin login password, scrypt-hashed ("salt:hashHex"). Null → fall back to
   // the ADMIN_PASSWORD env var. Never returned to the client.
   adminPasswordHash       String?
+  sessionVersion          Int      @default(1)
   updatedAt               DateTime @updatedAt
 }

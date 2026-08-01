@@ -29,9 +29,7 @@ export function SettingsDialog({
     setPwMsg(null);
     try {
       await api.post("/api/auth/password", { currentPassword, newPassword });
-      setPwMsg({ ok: true, text: "密码已修改。" });
-      setCurrentPassword("");
-      setNewPassword("");
+      window.location.assign("/login?passwordChanged=1");
     } catch (e) {
       setPwMsg({ ok: false, text: e instanceof Error ? e.message : "修改失败" });
     } finally {

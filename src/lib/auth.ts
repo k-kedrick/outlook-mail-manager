@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { SESSION_COOKIE } from "@/lib/session";
 import { getConfig } from "@/lib/settings";
 import { verifyPasswordHash } from "@/lib/secrets";
+import { adminPassword, appSecret } from "@/lib/server-env";
 
 export { SESSION_COOKIE };
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
@@ -11,15 +12,8 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 14; // 14 days
 type SessionPayload = {
   sub: "admin";
   exp: number;
+  version: number;
 };
-
-function appSecret(): string {
-  return process.env.APP_SECRET || "development-only-change-this-secret";
-}
-
-function adminPassword(): string {
-  return process.env.ADMIN_PASSWORD || "change-me";
-}
 
 function encode(value: unknown): string {
   return Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -52,12 +46,17 @@ export async function verifyAdminPassword(input: string): Promise<boolean> {
   return verifyPassword(input);
 }
 
-export function createSessionToken(): string {
-  const payload = encode({ sub: "admin", exp: Date.now() + SESSION_TTL_MS } satisfies SessionPayload);
+export async function createSessionToken(): Promise<string> {
+  const { sessionVersion } = await getConfig();
+  const payload = encode({
+    sub: "admin",
+    exp: Date.now() + SESSION_TTL_MS,
+    version: sessionVersion,
+  } satisfies SessionPayload);
   return `${payload}.${sign(payload)}`;
 }
 
-export function verifySessionToken(token: string | undefined): boolean {
+export async function verifySessionToken(token: string | undefined): Promise<boolean> {
   if (!token) return false;
   const [payload, signature] = token.split(".");
   if (!payload || !signature) return false;
@@ -70,7 +69,9 @@ export function verifySessionToken(token: string | undefined): boolean {
 
   try {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as SessionPayload;
-    return parsed.sub === "admin" && parsed.exp > Date.now();
+    if (parsed.sub !== "admin" || parsed.exp <= Date.now() || !Number.isInteger(parsed.version)) return false;
+    const { sessionVersion } = await getConfig();
+    return parsed.version === sessionVersion;
   } catch {
     return false;
   }
@@ -78,7 +79,7 @@ export function verifySessionToken(token: string | undefined): boolean {
 
 export async function setSessionCookie(): Promise<void> {
   const store = await cookies();
-  store.set(SESSION_COOKIE, createSessionToken(), {
+  store.set(SESSION_COOKIE, await createSessionToken(), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

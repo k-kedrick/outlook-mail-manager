@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LockKeyhole } from "lucide-react";
 
@@ -9,6 +9,13 @@ export default function LoginPage(): React.ReactNode {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("passwordChanged") === "1") {
+      setNotice("密码已修改，所有旧登录状态均已失效，请使用新密码重新登录。");
+    }
+  }, []);
 
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -57,6 +64,7 @@ export default function LoginPage(): React.ReactNode {
           className="mb-3 h-10 w-full rounded-lg border border-line2 bg-surface2 px-3 text-sm text-slate-100 outline-none transition-colors placeholder:text-dim focus:border-accent focus:ring-2 focus:ring-accent/20"
         />
 
+        {notice && <p className="mb-3 text-sm text-emerald-300">{notice}</p>}
         {error && <p className="mb-3 text-sm text-rose-400">{error}</p>}
 
         <button
