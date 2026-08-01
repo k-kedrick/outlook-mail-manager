@@ -40,7 +40,7 @@ function fakeClient() {
       envelope: { subject: "Verification", from: [{ address: "sender@example.com" }] },
       bodyStructure: { type: "text/html", part: "1", childNodes: [] },
     })),
-    download: vi.fn(async () => ({ content: Readable.from(["<p>654321</p>"]) })),
+    download: vi.fn(async () => ({ content: Readable.from(["<script>alert('unsafe')</script ><p>654321</p>"]) })),
   };
   return { client, release };
 }
@@ -82,7 +82,8 @@ describe("IMAP MailProvider contract", () => {
     const provider = new ImapMailProvider(() => first.client as any);
     const page = await provider.listMessages({ ...baseInput, folder: "inbox", limit: 20 });
     const detail = await provider.getMessage({ ...baseInput, folder: "inbox", messageId: page.messages[0]!.id });
-    expect(detail.bodyHtml).toBe("<p>654321</p>");
+    expect(detail.bodyHtml).toBe("<script>alert('unsafe')</script ><p>654321</p>");
+    expect(detail.preview).toBe("654321");
     expect(first.client.download).toHaveBeenCalledWith("200", "1", expect.objectContaining({ uid: true }));
 
     first.client.mailbox.uidValidity = 99n;
