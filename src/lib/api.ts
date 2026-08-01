@@ -2,12 +2,31 @@ import { Prisma } from "@prisma/client";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
+const NO_STORE_HEADERS = {
+  "Cache-Control": "no-store, max-age=0",
+  Pragma: "no-cache",
+  "X-Content-Type-Options": "nosniff",
+};
+
 export function ok<T>(data: T, init?: ResponseInit): NextResponse<T> {
-  return NextResponse.json(data, init);
+  return NextResponse.json(data, { ...init, headers: { ...NO_STORE_HEADERS, ...(init?.headers ?? {}) } });
 }
 
-export function fail(message: string, status = 400, details?: unknown): NextResponse {
-  return NextResponse.json({ error: { message, details } }, { status });
+export function fail(message: string, status = 400, details?: unknown, headers?: HeadersInit): NextResponse {
+  return NextResponse.json({ error: { message, details } }, { status, headers: { ...NO_STORE_HEADERS, ...(headers ?? {}) } });
+}
+
+export function rateLimited(retryAfter: number): NextResponse {
+  return fail("请求过于频繁，请稍后再试。", 429, undefined, { "Retry-After": String(retryAfter) });
+}
+
+export function requestId(): string {
+  return crypto.randomUUID();
+}
+
+export function logPublicError(scope: string, id: string, error: unknown): void {
+  const kind = error instanceof Error ? error.name : typeof error;
+  console.error(`[${scope}] request=${id} error=${kind}`);
 }
 
 export function routeError(error: unknown): NextResponse {

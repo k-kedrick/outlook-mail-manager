@@ -71,6 +71,9 @@ export async function GET(request: Request): Promise<Response> {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "Content-Disposition": `attachment; filename="accounts-${Date.now()}.txt"`,
+        "Cache-Control": "no-store, max-age=0",
+        Pragma: "no-cache",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch {
