@@ -26,6 +26,7 @@ export const DEFAULT_REFRESH_TOKEN_TTL_DAYS = 90;
 // misconfiguration causing excessive refresh-token rotations (a ban risk).
 export const MIN_ROTATION_INTERVAL_MS = 5 * 60_000;
 const lastRefreshAttempt = new Map<string, number>();
+const refreshInFlight = new Map<string, Promise<string>>();
 
 /** True when a refresh was skipped by the rate-limit backstop (not a real failure). */
 export function isThrottleError(error: unknown): boolean {
@@ -128,7 +129,7 @@ function cachedToken(account: MailAccount, kind: TokenKind): string | null {
  * persisting any rotated refresh token / cached access token) as needed.
  * Throws OAuthError on failure.
  */
-export async function getAccessToken(
+async function getAccessTokenInternal(
   account: MailAccount,
   kind: TokenKind,
   { forceRefresh = false }: { forceRefresh?: boolean } = {},
@@ -213,4 +214,24 @@ export async function getAccessToken(
   }
 
   return accessToken;
+}
+
+export async function getAccessToken(
+  account: MailAccount,
+  kind: TokenKind,
+  options: { forceRefresh?: boolean } = {},
+): Promise<string> {
+  if (!options.forceRefresh) {
+    const cached = cachedToken(account, kind);
+    if (cached) return cached;
+  }
+
+  const existing = refreshInFlight.get(account.id);
+  if (existing) return existing;
+
+  const pending = getAccessTokenInternal(account, kind, options).finally(() => {
+    if (refreshInFlight.get(account.id) === pending) refreshInFlight.delete(account.id);
+  });
+  refreshInFlight.set(account.id, pending);
+  return pending;
 }
