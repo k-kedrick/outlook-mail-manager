@@ -1,5 +1,6 @@
-import { ok, routeError } from "@/lib/api";
+import { logPublicError, ok, requestId, routeError } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
+import { buildBatchFeedback, missingIdIssues, safeIssueForStatus } from "@/lib/batch-feedback";
 import { prisma } from "@/lib/prisma";
 import { verifyStatuses } from "@/lib/outlook/health";
 import { bulkIdsSchema } from "@/lib/validation";
@@ -23,6 +24,7 @@ export async function POST(request: Request): Promise<Response> {
       where: ids ? { id: { in: ids } } : { status: { not: "AUTH_FAILED" } },
     });
 
+    const id = requestId();
     const results = await verifyStatuses(accounts, 5);
     const summary = results.reduce<Record<string, number>>((acc, r) => {
       const key = r.skipped ? "SKIPPED" : r.status;
@@ -30,7 +32,28 @@ export async function POST(request: Request): Promise<Response> {
       return acc;
     }, {});
 
-    return ok({ checked: results.length, summary, results });
+    const issues = [
+      ...results.map(safeIssueForStatus).filter((issue) => issue !== null),
+      ...missingIdIssues(ids, accounts.map((account) => account.id)),
+    ];
+    const safeResults = results.map((result) => {
+      const issue = safeIssueForStatus(result);
+      return { ...result, error: issue?.message ?? null };
+    });
+    for (const issue of issues.filter((entry) => entry.outcome === "failed")) {
+      logPublicError("check-status", id, new Error(issue.reasonCode), issue.reasonCode, issue.id);
+    }
+    return ok({
+      checked: results.length,
+      summary,
+      results: safeResults,
+      feedback: buildBatchFeedback({
+        requestId: id,
+        requested: ids?.length ?? accounts.length,
+        succeeded: results.filter((result) => !safeIssueForStatus(result)).length,
+        issues,
+      }),
+    });
   } catch (error) {
     return routeError(error);
   }

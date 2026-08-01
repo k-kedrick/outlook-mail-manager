@@ -24,41 +24,48 @@ export function requestId(): string {
   return crypto.randomUUID();
 }
 
-export function logPublicError(scope: string, id: string, error: unknown): void {
+export function logPublicError(scope: string, id: string, error: unknown, category?: string, subjectId?: string): void {
   const kind = error instanceof Error ? error.name : typeof error;
-  console.error(`[${scope}] request=${id} error=${kind}`);
+  console.error(
+    `[${scope}] request=${id} error=${kind}${category ? ` category=${category}` : ""}${subjectId ? ` subject=${subjectId}` : ""}`,
+  );
 }
 
 export function routeError(error: unknown): NextResponse {
+  const id = requestId();
   if (error instanceof ZodError) {
     const flattened = error.flatten();
     const fieldMessage = Object.values(flattened.fieldErrors)
       .flat()
       .find((message): message is string => Boolean(message));
     const formMessage = flattened.formErrors.find(Boolean);
-    return fail(fieldMessage || formMessage || "请求参数不正确。", 422, flattened);
+    return fail(fieldMessage || formMessage || "请求参数不正确。", 422, { ...flattened, requestId: id });
   }
 
   if (
     error instanceof Prisma.PrismaClientKnownRequestError ||
     error instanceof Prisma.PrismaClientUnknownRequestError
   ) {
-    return fail("数据库操作失败，请稍后重试。", 500);
+    logPublicError("api", id, error, "DATABASE_ERROR");
+    return fail("数据库操作失败，请稍后重试。", 500, { requestId: id });
   }
 
   if (
     error instanceof Prisma.PrismaClientRustPanicError ||
     error instanceof Prisma.PrismaClientInitializationError
   ) {
-    return fail("数据库服务暂时不可用，请稍后重试。", 500);
+    logPublicError("api", id, error, "DATABASE_UNAVAILABLE");
+    return fail("数据库服务暂时不可用，请稍后重试。", 500, { requestId: id });
   }
 
   if (error instanceof Error) {
     if (error.message === "UNAUTHORIZED") {
-      return fail("请先登录。", 401);
+      return fail("请先登录。", 401, { requestId: id });
     }
-    return fail(error.message || "请求失败。", 400);
+    logPublicError("api", id, error, "UNEXPECTED_ERROR");
+    return fail("请求处理失败，请稍后重试。", 500, { requestId: id });
   }
 
-  return fail("请求失败。", 500);
+  logPublicError("api", id, error, "UNKNOWN_ERROR");
+  return fail("请求失败。", 500, { requestId: id });
 }

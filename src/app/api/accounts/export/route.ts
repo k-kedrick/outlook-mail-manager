@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { requestId } from "@/lib/api";
 import { requireAuth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { decryptSecret } from "@/lib/secrets";
@@ -36,6 +37,7 @@ function valueFor(field: Field, a: ExportAccount): string {
 // ordered by selected id order when ids are provided, otherwise by email ascending.
 // Empty fields become "error".
 export async function GET(request: Request): Promise<Response> {
+  const id = requestId();
   try {
     await requireAuth();
     const url = new URL(request.url);
@@ -74,9 +76,11 @@ export async function GET(request: Request): Promise<Response> {
         "Cache-Control": "no-store, max-age=0",
         Pragma: "no-cache",
         "X-Content-Type-Options": "nosniff",
+        "X-Exported-Count": String(orderedAccounts.length),
+        "X-Request-Id": id,
       },
     });
   } catch {
-    return new Response("导出失败或未登录。", { status: 401 });
+    return new Response("导出失败或未登录。", { status: 401, headers: { "X-Request-Id": id } });
   }
 }

@@ -1,8 +1,10 @@
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  requestId?: string;
+  constructor(message: string, status: number, requestId?: string) {
     super(message);
     this.status = status;
+    this.requestId = requestId;
   }
 }
 
@@ -13,7 +15,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new ApiError(data?.error?.message ?? "请求失败", res.status);
+    throw new ApiError(data?.error?.message ?? "请求失败", res.status, data?.error?.details?.requestId);
   }
   return data as T;
 }

@@ -2,13 +2,16 @@
 
 import { useState } from "react";
 import { api } from "@/lib/client";
+import type { BatchFeedback } from "@/lib/batch-feedback";
 import { Button } from "./ui/button";
+import { BatchResultBanner, failedBatchResult, type BatchResult } from "./ui/batch-result";
 import { Dialog } from "./ui/dialog";
 import { fieldClass } from "./ui/field";
 import type { Group } from "./types";
 
 type BulkGroupResult = {
   updated: number;
+  feedback: BatchFeedback;
 };
 
 export function BulkGroupDialog({
@@ -24,22 +27,20 @@ export function BulkGroupDialog({
 }): React.ReactNode {
   const [groupId, setGroupId] = useState<string>("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [result, setResult] = useState<BatchResult | null>(null);
 
   async function submit(): Promise<void> {
     setLoading(true);
-    setError(null);
-    setMessage(null);
+    setResult(null);
     try {
       const res = await api.post<BulkGroupResult>("/api/accounts/bulk-group", {
         ids,
         groupId: groupId || null,
       });
-      setMessage(`已更新 ${res.updated} 个账号的分组。`);
+      setResult({ ...res.feedback, title: "批量修改分组完成", completedAt: new Date().toLocaleTimeString("zh-CN", { hour12: false }) });
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "修改失败");
+      setResult(failedBatchResult("批量修改分组失败", ids.length, e));
     } finally {
       setLoading(false);
     }
@@ -72,12 +73,7 @@ export function BulkGroupDialog({
         ))}
       </select>
 
-      {error && <p className="mt-3 text-sm text-rose-400">{error}</p>}
-      {message && (
-        <div className="mt-4 rounded-lg border border-line bg-surface2/60 p-3 text-xs text-slate-200">
-          {message}
-        </div>
-      )}
+      {result && <div className="mt-4"><BatchResultBanner result={result} onClose={() => setResult(null)} /></div>}
     </Dialog>
   );
 }
