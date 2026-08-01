@@ -156,13 +156,40 @@ async function loadBody(client: ImapFlow, message: FetchMessageObject): Promise<
   return { bodyText: await download(parts.text), bodyHtml: await download(parts.html) };
 }
 
+function parseTag(value: string): { closing: boolean; name: string } {
+  let cursor = 0;
+  while (cursor < value.length && /\s/.test(value[cursor]!)) cursor += 1;
+  const closing = value[cursor] === "/";
+  if (closing) cursor += 1;
+  while (cursor < value.length && /\s/.test(value[cursor]!)) cursor += 1;
+  const start = cursor;
+  while (cursor < value.length && /[A-Za-z0-9:_-]/.test(value[cursor]!)) cursor += 1;
+  return { closing, name: value.slice(start, cursor).toLowerCase() };
+}
+
 function htmlPreview(value: string): string {
-  return value
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, " ")
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  let output = "";
+  let hidden: "script" | "style" | null = null;
+  let cursor = 0;
+  while (cursor < value.length) {
+    if (value[cursor] !== "<") {
+      if (!hidden) output += value[cursor];
+      cursor += 1;
+      continue;
+    }
+    const end = value.indexOf(">", cursor + 1);
+    if (end < 0) break;
+    const tag = parseTag(value.slice(cursor + 1, end));
+    if (hidden) {
+      if (tag.closing && tag.name === hidden) hidden = null;
+    } else if (!tag.closing && (tag.name === "script" || tag.name === "style")) {
+      hidden = tag.name;
+    } else {
+      output += " ";
+    }
+    cursor = end + 1;
+  }
+  return output.replace(/\s+/g, " ").trim();
 }
 
 function mapMessage(

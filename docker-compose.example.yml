@@ -56,13 +56,13 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: ["npm", "run", "prisma:deploy"]
+    command: ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
     restart: "no"
 
   web:
     <<: *app
     container_name: outlook-mail-manager-web
-    command: ["npm", "run", "start:web"]
+    command: ["node", "node_modules/next/dist/bin/next", "start", "-H", "0.0.0.0", "-p", "3005"]
     ports:
       - "127.0.0.1:3005:3005"
     healthcheck:
@@ -75,7 +75,7 @@ services:
   worker:
     <<: *app
     container_name: outlook-mail-manager-worker
-    command: ["npm", "run", "start:worker"]
+    command: ["node", "node_modules/tsx/dist/cli.mjs", "src/worker.ts"]
     environment:
       <<: *secret-env
       WORKER_ID: worker-1
