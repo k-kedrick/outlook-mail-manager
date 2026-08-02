@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: outlook_test
+          POSTGRES_USER: outlook
+          POSTGRES_PASSWORD: outlook_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U outlook -d outlook_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://outlook:outlook_test_password@127.0.0.1:5432/outlook_test?schema=public
+      SESSION_SIGNING_KEY: test-session-signing-key-must-be-at-least-32-characters
+      DATA_ENCRYPTION_KEYS: test-v1:test-data-encryption-key-must-be-at-least-32-characters
+      CARD_KEY_HMAC_KEY: test-card-key-hmac-key-must-be-at-least-32-characters
+      ADMIN_BOOTSTRAP_PASSWORD: Test-only-bootstrap-password-123!
+      NEXT_PUBLIC_APP_URL: http://127.0.0.1:3005
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm audit --omit=dev
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: outlook-mail-manager:${{ github.sha }}
+      - name: Scan container image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: outlook-mail-manager:${{ github.sha }}
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH

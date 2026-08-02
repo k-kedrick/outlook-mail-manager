@@ -1,28 +1,84 @@
+name: outlook-mail-manager
+
+x-secret-env: &secret-env
+  SESSION_SIGNING_KEY_FILE: /run/secrets/session_signing_key
+  DATA_ENCRYPTION_KEYS_FILE: /run/secrets/data_encryption_keys
+  CARD_KEY_HMAC_KEY_FILE: /run/secrets/card_key_hmac_key
+  ADMIN_BOOTSTRAP_PASSWORD_FILE: /run/secrets/admin_bootstrap_password
+  METRICS_BEARER_TOKEN_FILE: /run/secrets/metrics_bearer_token
+
+x-app: &app
+  build:
+    context: .
+    target: runtime
+  env_file: [.env]
+  environment: *secret-env
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    migration:
+      condition: service_completed_successfully
+  volumes:
+    - ./secrets:/run/secrets:ro
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
 services:
-  outlook-mail-manager:
-    build: .
-    container_name: outlook-mail-manager
+  postgres:
+    image: postgres:18-alpine
     restart: unless-stopped
-    env_file:
-      - .env
+    env_file: [.env]
     environment:
-      DATABASE_URL: "file:/app/data/dev.db"
+      POSTGRES_DB: ${POSTGRES_DB:-outlook_manager}
+      POSTGRES_USER: ${POSTGRES_USER:-outlook}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  migration:
+    build:
+      context: .
+      target: runtime
+    env_file: [.env]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
+    restart: "no"
+
+  web:
+    <<: *app
+    container_name: outlook-mail-manager-web
+    command: ["node", "node_modules/next/dist/bin/next", "start", "-H", "0.0.0.0", "-p", "3005"]
     ports:
       - "127.0.0.1:3005:3005"
-    volumes:
-      - ./data:/app/data
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "node -e \"fetch('http://127.0.0.1:3005/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
-        ]
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3005/api/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
+      start_period: 45s
+
+  worker:
+    <<: *app
+    container_name: outlook-mail-manager-worker
+    command: ["node", "node_modules/tsx/dist/cli.mjs", "src/worker.ts"]
+    environment:
+      <<: *secret-env
+      WORKER_ID: worker-1
+
+volumes:
+  postgres-data:

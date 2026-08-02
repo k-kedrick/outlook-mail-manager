@@ -3,66 +3,259 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-model MailAccount {
-  id                 String    @id @default(cuid())
-  email              String    @unique
-  passwordCipher     String
-  clientId           String
-  refreshTokenCipher String
-  status             String    @default("UNKNOWN") // UNKNOWN | OK | AUTH_FAILED | LOCKED | ERROR
-  lastCheckedAt      DateTime?
-  lastError          String?
-  note               String?
-  groupId            String?
-
-  // Which mail protocol actually works for this account, learned on first success.
-  // "outlook" | "graph" | "imap" | null (unknown → Outlook REST, Graph, then IMAP).
-  mailProtocol       String?
-
-  // Refresh-token keep-alive tracking. The MSA refresh token slides forward on
-  // every use but dies after an inactivity window (~90 days). We record the last
-  // successful rotation and model a 90-day validity that counts down.
-  refreshTokenUpdatedAt DateTime?
-  refreshTokenExpiresAt DateTime? // now + refresh_token_expires_in, else now + 90 days
-
-  // Cached latest verification code (populated on demand / by optional polling).
-  lastCode        String?
-  lastCodeAt      DateTime? // received time of the email the code came from
-  lastCodeSubject String?
-
-  // Authenticator (TOTP) secret — the base32 seed, AES-256-GCM encrypted like the
-  // other secrets. Null when the account has no 2FA configured.
-  totpSecretCipher String?
-
-  // Cached access tokens (Graph and IMAP have different audiences/scopes)
-  graphTokenCipher    String?
-  graphTokenExpiresAt DateTime?
-  imapTokenCipher     String?
-  imapTokenExpiresAt  DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  group   MailGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
-  cardKey CardKey?
-
-  @@index([status])
-  @@index([groupId])
+enum AccountType {
+  UNKNOWN
+  PERSONAL
+  ORGANIZATION
 }
 
-// Redemption code bound one-to-one to an account. Reusable: buyers use it to
-// fetch verification/TOTP codes for the purchased account over time.
+enum MailProtocol {
+  GRAPH
+  IMAP
+  OUTLOOK_REST_LEGACY
+}
+
+enum OAuthResource {
+  GRAPH
+  OUTLOOK_IMAP
+  OUTLOOK_REST_LEGACY
+  IMPORTED_MULTI_RESOURCE
+}
+
+enum OAuthGrantSource {
+  MANAGED
+  IMPORTED
+}
+
+enum OAuthGrantStatus {
+  ACTIVE
+  REAUTH_REQUIRED
+  REVOKED
+  ERROR
+}
+
+enum AccessTokenProfile {
+  GRAPH_MAIL
+  IMAP_MAIL
+  OUTLOOK_REST_LEGACY
+}
+
+enum CapabilityState {
+  UNKNOWN
+  AVAILABLE
+  DENIED
+  DISABLED
+  TEMPORARY_FAILURE
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  RETRY
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum AuditOutcome {
+  SUCCEEDED
+  FAILED
+  DENIED
+}
+
+enum CodeRequestStatus {
+  PENDING
+  RUNNING
+  FOUND
+  EXPIRED
+  FAILED
+}
+
+model AdminUser {
+  id                String         @id @default(cuid())
+  username          String         @unique @default("admin")
+  passwordHash      String
+  totpSecretCipher  String?
+  totpConfirmedAt   DateTime?
+  sessionVersion    Int            @default(1)
+  bootstrapComplete Boolean        @default(false)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  sessions          AdminSession[]
+  recoveryCodes     RecoveryCode[]
+  oauthFlows        OAuthFlow[]
+  auditEvents       AuditEvent[]
+}
+
+model AdminSession {
+  id             String    @id @default(cuid())
+  adminId        String
+  tokenHash      String    @unique
+  csrfHash       String
+  sessionVersion Int
+  expiresAt      DateTime
+  lastSeenAt     DateTime  @default(now())
+  ipHash         String?
+  userAgentHash  String?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  admin          AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId, expiresAt])
+  @@index([expiresAt])
+}
+
+model RecoveryCode {
+  id        String    @id @default(cuid())
+  adminId   String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  admin     AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@unique([adminId, codeHash])
+}
+
+model MailAccount {
+  id                String        @id @default(cuid())
+  email             String        @unique
+  normalizedEmail   String        @unique
+  providerSubject   String?
+  tenantId          String?
+  issuer            String?
+  accountType       AccountType   @default(UNKNOWN)
+  preferredProtocol MailProtocol?
+  status            String        @default("UNKNOWN")
+  lastCheckedAt     DateTime?
+  lastErrorCode     String?
+  lastError         String?
+  note              String?
+  groupId           String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  rowVersion        Int           @default(1)
+
+  group        MailGroup?           @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  cardKey      CardKey?
+  secret       AccountSecret?
+  oauthGrants  OAuthGrant[]
+  capabilities ProtocolCapability[]
+  jobs         Job[]
+  codeRequests CodeRequest[]
+
+  @@unique([issuer, providerSubject])
+  @@index([status])
+  @@index([groupId])
+  @@index([tenantId])
+  @@index([preferredProtocol])
+}
+
+model AccountSecret {
+  accountId      String      @id
+  passwordCipher String?
+  totpCipher     String?
+  keyId          String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  account        MailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+model OAuthGrant {
+  id                    String             @id @default(cuid())
+  accountId             String
+  resource              OAuthResource
+  source                OAuthGrantSource
+  status                OAuthGrantStatus   @default(ACTIVE)
+  clientId              String
+  tenantId              String?
+  refreshTokenCipher    String
+  grantedScopes         String[]
+  keyId                 String
+  version               Int                @default(1)
+  lastRotatedAt         DateTime?
+  lastVerifiedAt        DateTime?
+  nextMaintenanceAt     DateTime?
+  providerExpiresAt     DateTime?
+  refreshLeaseOwner     String?
+  refreshLeaseExpiresAt DateTime?
+  lastErrorCode         String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+  account               MailAccount        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  accessTokens          AccessTokenCache[]
+
+  @@unique([accountId, resource, clientId])
+  @@index([status, nextMaintenanceAt])
+  @@index([refreshLeaseExpiresAt])
+}
+
+model AccessTokenCache {
+  id          String             @id @default(cuid())
+  grantId     String
+  profile     AccessTokenProfile
+  tokenCipher String
+  keyId       String
+  expiresAt   DateTime
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  grant       OAuthGrant         @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@unique([grantId, profile])
+  @@index([expiresAt])
+}
+
+model ProtocolCapability {
+  id                  String          @id @default(cuid())
+  accountId           String
+  protocol            MailProtocol
+  state               CapabilityState @default(UNKNOWN)
+  consecutiveFailures Int             @default(0)
+  lastProbedAt        DateTime?
+  lastSuccessAt       DateTime?
+  lastFailureAt       DateTime?
+  lastErrorCode       String?
+  circuitOpenUntil    DateTime?
+  retryAfterAt        DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  account             MailAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, protocol])
+  @@index([state, circuitOpenUntil])
+}
+
+model OAuthFlow {
+  id                 String        @id @default(cuid())
+  adminId            String
+  accountId          String?
+  resource           OAuthResource
+  stateHash          String        @unique
+  nonceHash          String
+  pkceVerifierCipher String
+  expectedSubject    String?
+  expectedTenantId   String?
+  expiresAt          DateTime
+  consumedAt         DateTime?
+  createdAt          DateTime      @default(now())
+  admin              AdminUser     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
 model CardKey {
-  id        String      @id @default(cuid())
-  code      String      @unique
-  accountId String      @unique
-  account   MailAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  id           String        @id @default(cuid())
+  codeHash     String        @unique
+  codePrefix   String?
+  codeLast4    String?
+  accountId    String        @unique
+  account      MailAccount   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  codeRequests CodeRequest[]
 }
 
 model MailGroup {
@@ -74,25 +267,106 @@ model MailGroup {
   accounts  MailAccount[]
 }
 
-// Single-row app configuration (id fixed to "singleton").
-model AppConfig {
-  id                      String   @id @default("singleton")
-  // Keep-alive: force-refresh (rotate) refresh tokens so they don't hit the
-  // ~90-day inactivity limit. Runs every N *days* — rotation is intended but rare.
-  refreshEnabled          Boolean  @default(true)
-  refreshIntervalDays     Int      @default(7)
-  // Status check: read-only probe that reuses cached access tokens and does NOT
-  // rotate the refresh token. Safe to run frequently. Runs every N *minutes*.
-  statusCheckEnabled      Boolean  @default(true)
-  statusCheckIntervalMinutes Int   @default(360)
-  lastStatusCheckAt       DateTime?
-  // Verification-code polling (reads mail, reuses cached tokens, no rotation).
-  codePollEnabled         Boolean  @default(false)
-  codePollIntervalSeconds Int      @default(60)
-  lastCodePollAt          DateTime?
-  // Admin login password, scrypt-hashed ("salt:hashHex"). Null → fall back to
-  // the ADMIN_PASSWORD env var. Never returned to the client.
-  adminPasswordHash       String?
-  sessionVersion          Int      @default(1)
-  updatedAt               DateTime @updatedAt
+model Job {
+  id             String       @id @default(cuid())
+  type           String
+  status         JobStatus    @default(PENDING)
+  accountId      String?
+  dedupeKey      String?      @unique
+  payload        Json
+  result         Json?
+  priority       Int          @default(0)
+  runAt          DateTime     @default(now())
+  attempts       Int          @default(0)
+  maxAttempts    Int          @default(5)
+  leaseOwner     String?
+  leaseExpiresAt DateTime?
+  lastErrorCode  String?
+  completedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  account        MailAccount? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  jobAttempts    JobAttempt[]
+
+  @@index([status, runAt, priority])
+  @@index([leaseExpiresAt])
+  @@index([accountId, status])
+}
+
+model JobAttempt {
+  id          String    @id @default(cuid())
+  jobId       String
+  attempt     Int
+  workerId    String
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  durationMs  Int?
+  outcome     JobStatus
+  errorCode   String?
+  job         Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, attempt])
+  @@index([startedAt])
+}
+
+model AuditEvent {
+  id         String       @id @default(cuid())
+  adminId    String?
+  action     String
+  targetType String?
+  targetId   String?
+  outcome    AuditOutcome
+  requestId  String
+  ipHash     String?
+  metadata   Json?
+  createdAt  DateTime     @default(now())
+  admin      AdminUser?   @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([adminId, createdAt])
+  @@index([requestId])
+}
+
+model WorkerHeartbeat {
+  workerId    String   @id
+  version     String
+  concurrency Int
+  lastSeenAt  DateTime @default(now())
+  startedAt   DateTime @default(now())
+}
+
+model CodeRequest {
+  id                 String            @id @default(cuid())
+  accountId          String
+  cardKeyId          String?
+  retrievalTokenHash String            @unique
+  status             CodeRequestStatus @default(PENDING)
+  resultCodeCipher   String?
+  resultKeyId        String?
+  resultSubject      String?
+  resultFrom         String?
+  resultReceivedAt   DateTime?
+  lastErrorCode      String?
+  expiresAt          DateTime
+  completedAt        DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  account            MailAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  cardKey            CardKey?          @relation(fields: [cardKeyId], references: [id], onDelete: SetNull)
+
+  @@index([status, expiresAt])
+  @@index([accountId, createdAt])
+}
+
+model RateLimitBucket {
+  id          String   @id @default(cuid())
+  keyHash     String
+  windowStart DateTime
+  count       Int      @default(1)
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([keyHash, windowStart])
+  @@index([expiresAt])
 }
