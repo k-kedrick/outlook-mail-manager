@@ -1,48 +1,27 @@
-# V2 架构与边界
+# 项目架构
 
-## 模块化单体
+本项目保持单体部署，以清晰的模块边界替代不必要的微服务拆分。
 
-```text
-src/app/api/v2       HTTP 适配层：认证、Zod、响应映射
-src/features         前端功能模块、TanStack Query、API Client
-src/modules/*/domain 领域类型、规则和 Port
-src/modules/*/application 用例与流程编排
-src/modules/*/infrastructure Prisma、Graph、IMAP、REST 等适配器
-src/shared           加密、数据库、日志、指标、审计、HTTP
-src/worker.ts        Worker 组合根
-```
+## 分层与职责
 
-Domain 不导入 Next.js、Prisma、HTTP 或具体 Provider。Application 不导入 Route Handler 或 Infrastructure；组合根负责注入。ESLint 在 CI 强制这些边界。
+- `src/app`：Next.js 页面和 HTTP Route Handler，只负责鉴权、参数验证、调用领域服务与构造响应。
+- `src/components`：客户端交互与展示，不直接访问数据库或解密敏感字段。
+- `src/lib/outlook`：Outlook REST、Microsoft Graph、IMAP OAuth2、验证码、状态检查、令牌刷新和后台调度等领域逻辑。
+- `src/lib/auth.ts`、`server-env.ts`、`rate-limit.ts`、`secrets.ts`：认证、运行配置、流量保护和加密安全边界。
+- `src/lib/prisma.ts`、`settings.ts`：数据库连接和应用配置持久化。
+- `prisma/migrations`：只允许向前、可审计的数据结构变更；部署由 `prisma migrate deploy` 执行。
 
-## OAuth 与 Token
+## 关键不变量
 
-- `OAuthGrant(GRAPH)` 只服务 `GRAPH_MAIL`。
-- `OAuthGrant(OUTLOOK_IMAP)` 只服务 `IMAP_MAIL`。
-- `IMPORTED_MULTI_RESOURCE` 兼容外部公共客户端 Token，但每个 Profile 仍有独立 Access Token Cache。
-- Token Broker 使用进程内 Promise 合并和 PostgreSQL 60 秒刷新租约。事务同时更新轮换后的 Refresh Token、Grant 版本和 Access Token。
-- `invalid_grant` 立即标记 `REAUTH_REQUIRED`；429 遵循 `Retry-After`；临时网络错误由任务队列退避。
-- 不伪造“90 天有效期”。仅记录真实 `providerExpiresAt`、`lastRotatedAt`、`lastVerifiedAt` 和维护策略 `nextMaintenanceAt`。
+- `APP_SECRET` 不随普通发布轮换，避免已有 AES-256-GCM 密文失效。
+- API 列表响应不包含密码、Refresh Token 或 TOTP Secret 明文。
+- Refresh Token 的轮换按账户串行，并受最短轮换间隔保护。
+- 不同 OAuth audience 的访问令牌不得共享；Graph 与 Outlook/IMAP 换取过程按账号串行。
+- IMAP 连接必须使用 TLS、只读邮箱锁、有限超时，并在 `finally` 中释放锁和连接。
+- 修改管理员密码会递增 Session 版本，使所有旧 Cookie 失效。
+- 定时任务不可重入；公开兑换接口不返回内部异常原文。
+- SQLite 数据目录必须持久化，发布前必须备份且禁止进入 Git。
 
-## 邮件路由
+## 发布边界
 
-默认顺序为 Graph → IMAP。只有存在已探测可用能力时，legacy REST 才进入候选。一次临时错误只回退当前请求；连续 3 次临时失败熔断 15 分钟；权限永久错误禁用能力。
-
-邮件列表只取摘要，不下载附件。正文限制大小，HTML 在无权限 sandbox iframe 中展示。Graph nextLink、IMAP UIDVALIDITY/UID 和 Provider 标识都封装在带版本的加密 Cursor/Message ID 中。
-
-## 任务与并发
-
-Worker 用 `FOR UPDATE SKIP LOCKED` 领取任务，租约 60 秒并每 20 秒续租。默认最多 5 次重试：30 秒、2 分钟、10 分钟、30 分钟、2 小时。权限错误、禁用账号和 `invalid_grant` 不重试。
-
-调度器每 6 小时使用账号已验证通道做一次轻量健康检查，每 24 小时重新探测完整协议能力；Token Maintenance 按 Grant 的 14 天维护策略入队，保留期清理每天执行一次。
-
-验证码使用最长 10 分钟的 `CodeRequest`，每 10 秒重试，最多 60 次；不会对全部账号永久轮询。查询端必须同时持有随机 retrieval token。
-
-## 安全与可观测性
-
-- Argon2id 管理员密码；TOTP 密文；恢复码 HMAC；Session Token 仅存独立密钥计算的 HMAC-SHA-256。
-- Session 绑定 `sessionVersion`，改密事务会递增版本并撤销所有 Session。
-- AES-256-GCM 密文包含 Key ID，支持新 Key 写入和旧 Key 解密。
-- 卡密只保存 HMAC、前缀和尾号。
-- JSON 日志统一记录 request/job ID 与错误类别，禁止记录密码、Token、完整卡密、TOTP Secret 和验证码正文。
-- `/internal/metrics` 在生产环境要求 Bearer Token，并应由 Nginx allowlist 限制。
-- 配置 `OTEL_EXPORTER_OTLP_ENDPOINT` 后，Web 与 Worker 启用 Node 自动插桩并通过 OTLP/HTTP 导出 traces；未配置时不建立外部连接。
+应用容器仅绑定 `127.0.0.1:3005`，Nginx 是唯一入口，Cloudflare 提供外层 TLS/CDN/限流。`GET /api/health` 是容器健康探针；它验证数据库但不暴露内部信息。
