@@ -1,7 +1,7 @@
-import { V2Dashboard } from "@/features/dashboard/v2-dashboard";
-import { requireV2AdminPage } from "@/modules/auth/presentation/next-auth";
+import { Dashboard } from "@/components/dashboard";
+import { requireAuthPage } from "@/lib/auth";
 
 export default async function HomePage(): Promise<React.ReactNode> {
-  await requireV2AdminPage();
-  return <V2Dashboard />;
+  await requireAuthPage();
+  return <Dashboard />;
 }

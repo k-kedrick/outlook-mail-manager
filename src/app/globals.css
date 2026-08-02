@@ -65,16 +65,6 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
-@layer components {
-  .primary-button {
-    @apply h-10 w-full rounded-lg bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-600 disabled:cursor-not-allowed disabled:opacity-50;
-  }
-
-  .secondary-button {
-    @apply rounded-lg border border-line2 bg-surface2 px-3 py-2 text-sm text-slate-200 transition-colors hover:border-accent hover:text-white disabled:opacity-50;
-  }
-}
-
 /* Glowing gradient text for the primary page title. */
 .text-glow-title {
   background-image: linear-gradient(90deg, #c7d2fe, #93c5fd, #5eead4);

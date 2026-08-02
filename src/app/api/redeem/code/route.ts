@@ -1,39 +1,39 @@
-import { NextResponse } from "next/server";
-import { z } from "zod";
-import { mailRouter } from "@/modules/mail/composition";
-import { cardKeyService } from "@/modules/redemption/composition";
-import { extractVerificationCode } from "@/modules/redemption/domain/code-extractor";
-import { hmacValue } from "@/shared/crypto/hash";
-import { markLegacyApi } from "@/shared/http/legacy-deprecation";
-import { consumeRateLimit } from "@/shared/rate-limit/postgres-rate-limit";
+import { fail, logPublicError, ok, rateLimited, requestId, routeError } from "@/lib/api";
+import { fetchAndStoreCode } from "@/lib/outlook/code-service";
+import { accountForCardKey } from "@/lib/redeem";
+import { redeemSchema } from "@/lib/validation";
+import { checkRateLimit, privateKey, requestIp } from "@/lib/rate-limit";
 
-const schema = z.object({ code: z.string().min(8).max(128) });
-const json = (body: unknown, status = 200): Response => markLegacyApi(NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } }));
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
+// Public: fetch the latest email verification code for the card key's account.
+// Read-only path (fetchAndStoreCode reuses cached access tokens + the 5-min
+// rotation guard) — it never force-refreshes / rotates the refresh token.
 export async function POST(request: Request): Promise<Response> {
+  const id = requestId();
   try {
-    const { code } = schema.parse(await request.json());
-    const ip = request.headers.get("x-real-ip") ?? "unknown";
-    const limited = await consumeRateLimit("legacy-redeem-code", `${ip}:${hmacValue(code.toUpperCase())}`, 6, 60_000);
-    if (!limited.allowed) return markLegacyApi(NextResponse.json({ error: { message: "请求过于频繁。" } }, { status: 429, headers: { "Retry-After": String(limited.retryAfterSeconds) } }));
-    const key = await cardKeyService.resolve(code);
-    if (!key) return json({ error: { message: "卡密无效或不存在。" } }, 404);
-    const hits: Array<{ code: string; codeAt: string | null; subject: string; from: string }> = [];
-    for (const folder of ["inbox", "junk"] as const) {
-      const page = await mailRouter.list({ accountId: key.accountId, folder, limit: 20 }).catch(() => null);
-      for (const summary of page?.messages ?? []) {
-        let message = summary;
-        let value = extractVerificationCode(message);
-        if (!value) {
-          message = await mailRouter.getMessage({ accountId: key.accountId, folder, messageId: summary.id }).catch(() => summary);
-          value = extractVerificationCode(message);
-        }
-        if (value) { hits.push({ code: value, codeAt: message.receivedAt, subject: message.subject, from: message.from }); break; }
-      }
+    const { code } = redeemSchema.parse(await request.json());
+    const limited = checkRateLimit("redeem-code", `${requestIp(request)}:${privateKey(code)}`, 6, 60_000);
+    if (!limited.allowed) return rateLimited(limited.retryAfter);
+    const account = await accountForCardKey(code);
+    if (!account) return fail("卡密无效或不存在。", 404);
+
+    try {
+      const result = await fetchAndStoreCode(account);
+      return ok({
+        code: result.code,
+        codeAt: result.codeAt,
+        subject: result.subject,
+        from: result.from,
+      });
+    } catch (mailError) {
+      logPublicError("redeem-code", id, mailError);
+      return fail(`暂时无法读取验证码。请求编号：${id}`, 502);
     }
-    hits.sort((a, b) => new Date(b.codeAt ?? 0).getTime() - new Date(a.codeAt ?? 0).getTime());
-    return json(hits[0] ?? { code: null, codeAt: null, subject: null, from: null });
   } catch (error) {
-    return json({ error: { message: error instanceof z.ZodError ? "卡密格式不正确。" : "暂时无法读取验证码。" } }, error instanceof z.ZodError ? 422 : 502);
+    if (error instanceof Error && error.name === "ZodError") return routeError(error);
+    logPublicError("redeem-code", id, error);
+    return fail(`暂时无法读取验证码。请求编号：${id}`, 500);
   }
 }
